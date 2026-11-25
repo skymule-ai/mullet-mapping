@@ -1,0 +1,37 @@
+# Localization in a prior map, on one drone. Runs beside mullet-localization (FAST-LIO2) over DDS.
+#   cp .env.example .env               # MAPPING_TAG, MAP_SITE; the ROS domain and DRONE_ID come
+#                                      # from /etc/mullet/drone.env
+#   docker compose pull && docker compose up -d
+# config/ and the map are mounted: edit, then `docker compose restart map_localizer`. Never in flight.
+name: mullet-mapping
+
+x-ros: &ros
+  network_mode: host
+  ipc: host
+  restart: unless-stopped
+  # This drone's identity (ROS_DOMAIN_ID, DRONE_ID, ...), written by mullet-setup and shared by every
+  # Compose project on the Orin. Off the drone, point MULLET_DRONE_ENV at a copy.
+  env_file:
+    - path: ${MULLET_DRONE_ENV:-/etc/mullet/drone.env}
+      required: true
+  environment:
+    RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    # Same as mullet-core, mullet-localization and the paddock.
+    FASTDDS_BUILTIN_TRANSPORTS: UDPv4
+
+services:
+  # /$DRONE_ID/fast_lio/{cloud_registered_body,odometry} -> map -> camera_init on /$DRONE_ID/tf,
+  # /$DRONE_ID/map_localizer/status. docs/design.md is the spec.
+  map_localizer:
+    <<: *ros
+    image: ghcr.io/skymule-ai/mullet-mapping:${MAPPING_TAG:?set MAPPING_TAG in .env}
+    build:
+      context: .
+    volumes:
+      - ./config:/config:ro
+      - ${MAP_DIR:?set MAP_DIR in .env}/${MAP_SITE:?set MAP_SITE in .env}:/map:ro
+    # TODO(step 2): the node's command. Follow mullet-localization's fast_lio service:
+    #   D=$${DRONE_ID:?...} && exec ros2 run map_localizer map_localizer_node --ros-args
+    #   -r __ns:=/$$D --params-file /config/map_localizer.yaml -p map_path:=/map/map.pcd
+    #   plus the remaps that put TF on /$$D/tf (and /tf_static on /$$D/tf_static).
+    # Until then the image's CMD runs.

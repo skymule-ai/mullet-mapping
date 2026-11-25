@@ -1,0 +1,93 @@
+# map_localizer design
+
+The spec `src/map_localizer` implements. Change the code and this file together.
+
+## Purpose
+
+FAST-LIO2 gives a smooth, fast pose (`camera_init → body`) that drifts about 0.5 % of the
+distance travelled. A map built offline (`map.pcd`, loop-closed by `field/tools/pgo_map.py`)
+does not drift. `map_localizer` measures where the drifting `camera_init` frame sits in that map
+and publishes it as `map → camera_init`, so:
+
+```text
+map → body = (map → camera_init) · (camera_init → body)
+              this node, 1 Hz      FAST-LIO2, 10 Hz
+```
+
+Local (steady flight) and global (where am I in the map) stay separate. PX4 flies on FAST-LIO2
+alone. The correction is only for the mission, and where it is applied is decided in phase 2:
+
+* **Option A, default:** `mullet_core` converts map-frame targets into odom with the latest
+  correction. PX4 never sees it.
+* **Option B:** ev_bridge sends `map → base_link`, the correction slewed. Chosen only if phase 2
+  shows steps of a few cm and no false matches.
+
+The node is the same either way.
+
+## Inputs and outputs
+
+| Dir | Name (under `/$DRONE_ID`) | Why |
+| --- | --- | --- |
+| reads | `/map/map.pcd` | the reference. Read once at start, never modified |
+| reads | `fast_lio/cloud_registered_body` | deskewed scan in body: no smear from the 100 ms sweep |
+| reads | `fast_lio/odometry` | `camera_init → body` at the scan's stamp, to place each scan |
+| writes | `tf` `map → camera_init` | the correction. One parent per frame, so never `map → body` |
+| writes | `map_localizer/status` | for preflight, Paddock, the bag; `diagnostic_msgs/DiagnosticStatus` |
+
+`cloud_registered_body` is FAST-LIO2's undistorted scan before its voxel filter, with every 3rd
+point kept (`point_filter_num: 3` in mullet-localization `config/fast-lio/mid360.yaml`).
+
+## The loop, at 1 Hz
+
+1. **Submap.** Keep the last ~1 s of scans (about 10). Transform each into `camera_init` with the
+   odometry of the same stamp. A single MID-360 scan is sparse; ten give a stable match.
+2. **Downsample** the submap to `submap_voxel` (0.1–0.2 m).
+3. **Predict** `T_map_body = T_map_odom(last good) · T_odom_body(now)`. Off only by the drift
+   since the last match: a few cm.
+4. **Align.** GICP (small_gicp), submap → map, from the prediction, coarse to fine.
+5. **Gate.** Accept only if all hold:
+   * overlap: more than `min_overlap` (0.5) of the points within `max_corr_dist` (0.5 m) of the map;
+   * RMSE of those points below `max_rmse` (0.2 m);
+   * step from the previous correction below `max_step_m` (0.3 m) and `max_step_deg` (3°);
+   * not degenerate: the smallest eigenvalue of the GICP Hessian's translation block above
+     `min_hessian_eig` (a corridor leaves one axis unconstrained).
+6. **Update** on pass: `T_map_odom = T_map_body(matched) · T_odom_body⁻¹`, both at the submap's
+   reference stamp. On fail: keep the last good value, count the failure.
+7. **Publish** `T_map_odom` on TF at `tf_rate` (10 Hz) from a separate timer, so lookups never go
+   stale between matches. Publish status on every match.
+
+## States
+
+| State | Entered when | Behaviour |
+| --- | --- | --- |
+| INIT | start | wide search around the initial pose: `init_yaw_steps` yaw hypotheses (12), best fitness wins. Must pass before arming |
+| TRACKING | a match passes the gate | normal loop |
+| HOLDING | a match fails | keep the last good correction. Error grows at the drift rate only |
+| LOST | no pass for `lost_after_s` (5 s), or `max_rejected_steps` (3) large steps in a row | reported. The mission layer decides (hold, land); this node never guesses |
+
+From HOLDING, one pass returns to TRACKING. From LOST, only a pass under the INIT search does.
+
+Initial pose: identity by default (takeoff from the mapping walk's start). Otherwise
+`init_pose` (x, y, z, yaw in `map`) as a parameter.
+
+## Not in scope
+
+* Loop closure, PGO: offline, `pgo_map.py`.
+* Map updates: the map is read-only.
+* Writing to PX4: Option A is `mullet_core`, Option B is ev_bridge.
+* Obstacles: `map_server`, the static ESDF and `clearance`, later in this repository.
+
+## Parameters
+
+All in `config/map_localizer.yaml`, with the starting values above. Tune from replayed bags, never
+during a flight.
+
+## Open points
+
+* small_gicp on aarch64: built from source in the Dockerfile; check it builds on the CI's ARM runner.
+* `map.pcd` comes from `pgo_map.py`'s export, which does not exist yet. Until then, build a test
+  map from an October bag (merge `cloud_registered` with the PGO poses).
+* Replay (Status step 9) needs `cloud_registered_body`. `record-lite` keeps raw `/livox/*`, not
+  that topic: replay FAST-LIO2 on the raw scans to regenerate it.
+* Status message: `DiagnosticStatus` for now. A Mullet message in mullet-interfaces only if
+  Paddock or the planner need typed fields.

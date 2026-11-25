@@ -1,0 +1,7 @@
+.git
+.github
+.env
+build
+install
+log
+docs
