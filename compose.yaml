@@ -21,7 +21,7 @@ x-ros: &ros
 
 services:
   # /$DRONE_ID/fast_lio/{cloud_registered_body,odometry} -> map -> camera_init on /$DRONE_ID/tf,
-  # /$DRONE_ID/map_localizer/status. docs/design.md is the spec.
+  # /$DRONE_ID/map_localizer/status. Documentation/design.rst is the spec.
   map_localizer:
     <<: *ros
     image: ghcr.io/skymule-ai/mullet-mapping:${MAPPING_TAG:?set MAPPING_TAG in .env}

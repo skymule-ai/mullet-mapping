@@ -1,4 +1,4 @@
-// map_localizer: see include/map_localizer/map_localizer.hpp and docs/design.md.
+// map_localizer: see include/map_localizer/map_localizer.hpp and Documentation/design.rst.
 // Unwritten functions throw, so nothing silently returns a made-up pose.
 #include "map_localizer/map_localizer.hpp"
 
@@ -49,7 +49,7 @@ State next_state(
   State current, bool passed, double seconds_since_last_pass, int rejected_steps_in_a_row,
   const Params & params)
 {
-  // TODO(step 7): the transitions in docs/design.md "States". From LOST, only an INIT search
+  // TODO(step 7): the transitions in Documentation/design.rst "States". From LOST, only an INIT search
   //   brings it back.
   (void)current; (void)passed; (void)seconds_since_last_pass; (void)rejected_steps_in_a_row;
   (void)params;

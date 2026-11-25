@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sensor-free smoke test of the image: it starts, the node is there, it loads a map and waits for
-# scans. Not a test of localization quality (that is the replay, Status step 9).
+# scans. Not a test of localization quality (that is the replay, Documentation/status.rst step 9).
 set -euo pipefail
 
 image="${MAPPING_IMAGE:-ghcr.io/skymule-ai/mullet-mapping:local}"

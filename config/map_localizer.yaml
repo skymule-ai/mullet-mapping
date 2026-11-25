@@ -1,4 +1,4 @@
-# map_localizer parameters. docs/design.md explains each one. Tune from replayed bags, never in flight.
+# map_localizer parameters. Documentation/design.rst explains each one. Tune from replayed bags, never in flight.
 map_localizer:
   ros__parameters:
     map_path: /map/map.pcd          # mounted read-only by compose.yaml

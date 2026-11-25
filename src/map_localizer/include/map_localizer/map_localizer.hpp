@@ -1,9 +1,9 @@
-// map_localizer: FAST-LIO2 odometry localized in a prior map. Spec: docs/design.md.
+// map_localizer: FAST-LIO2 odometry localized in a prior map. Spec: Documentation/design.rst.
 //
 // Two layers, so the math is testable without ROS:
 //   - free functions (pure: poses and numbers in, poses and numbers out), tested in test/;
 //   - the MapLocalizer node, which owns subscriptions, timers, state, and calls them.
-// TODO(step N) markers match the README's Status list.
+// TODO(step N) markers match the steps in Documentation/status.rst.
 #pragma once
 
 #include <deque>
@@ -73,7 +73,7 @@ Eigen::Isometry3d predict(
 struct Step { double meters; double degrees; };
 Step step_between(const Eigen::Isometry3d & previous, const Eigen::Isometry3d & candidate);
 
-// True only if every check in docs/design.md "Gate" holds. (step 6)
+// True only if every check in Documentation/design.rst "Gate" holds. (step 6)
 bool passes_gate(const MatchQuality & quality, const Step & step, const Params & params);
 
 // Next state from the current one and this match's outcome. (step 7)
