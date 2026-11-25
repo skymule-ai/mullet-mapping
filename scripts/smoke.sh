@@ -14,8 +14,8 @@ trap cleanup EXIT
 
 docker image inspect "${image}" >/dev/null
 
-# TODO(step 2): 1. the package and executable exist
-#   docker run --rm "${image}" ros2 pkg executables map_localizer | grep -q map_localizer_node
+# 1. the package and executable exist
+docker run --rm "${image}" ros2 pkg executables map_localizer | grep -q map_localizer_node
 
 # TODO(step 3): 2. it loads a map. Write a tiny map.pcd (e.g. the walls of a box room) to a temp dir,
 #   mount it at /map, run the node in its own ROS_DOMAIN_ID (never meet a real drone), and grep the

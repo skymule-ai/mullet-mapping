@@ -10,6 +10,7 @@ Layout
     src/map_localizer/        ament_cmake package: include/, src/, test/ (gtest)
     config/map_localizer.yaml parameters with starting values
     Dockerfile                FROM mullet-base, small_gicp pinned and built from source
+    images/mapping/           image files: entrypoint.sh (Dockerfile joins when a second image comes)
     compose.yaml              the map_localizer service; reads /etc/mullet/drone.env
     .env.example              image tag and which map to load
     scripts/smoke.sh          sensor-free smoke test of the image

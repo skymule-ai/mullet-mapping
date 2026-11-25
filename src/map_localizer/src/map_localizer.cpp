@@ -3,6 +3,7 @@
 #include "map_localizer/map_localizer.hpp"
 
 #include <stdexcept>
+#include <vector>
 
 namespace map_localizer
 {
@@ -61,7 +62,8 @@ State next_state(
 MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
 : Node("map_localizer", options)
 {
-  // TODO(step 2): declare_parameters(); log "map_localizer started" with the map path.
+  declare_parameters();
+  RCLCPP_INFO(get_logger(), "map_localizer started with map path: %s", params_.map_path.c_str());
   // TODO(step 3): load_map(); fail fast (throw) if the file is missing or empty.
   // TODO(step 4): subscriptions, relative names so the namespace applies:
   //   "fast_lio/cloud_registered_body" -> on_scan, "fast_lio/odometry" -> on_odometry (SensorDataQoS).
@@ -71,8 +73,40 @@ MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
 
 void MapLocalizer::declare_parameters()
 {
-  // TODO(step 2): declare_parameter<T>(name, default) for every field in Params, defaults as in
-  //   config/map_localizer.yaml.
+  params_.map_path = declare_parameter<std::string>("map_path", "/map/map.pcd");
+  params_.map_frame = declare_parameter<std::string>("map_frame", "map");
+  params_.odom_frame = declare_parameter<std::string>("odom_frame", "camera_init");
+  params_.body_frame = declare_parameter<std::string>("body_frame", "body");
+  params_.map_voxel = declare_parameter<double>("map_voxel", 0.2);
+  params_.submap_window_s = declare_parameter<double>("submap_window_s", 1.0);
+  params_.submap_voxel = declare_parameter<double>("submap_voxel", 0.15);
+  const double match_rate = declare_parameter<double>("match_rate", 1.0);
+  if (match_rate <= 0.0) {
+    throw std::invalid_argument("Parameter 'match_rate' must be positive");
+  }
+  params_.match_rate = match_rate;
+  const double tf_rate = declare_parameter<double>("tf_rate", 10.0);
+  if (tf_rate <= 0.0) {
+    throw std::invalid_argument("Parameter 'tf_rate' must be positive");
+  }
+  params_.tf_rate = tf_rate;
+  params_.max_corr_dist = declare_parameter<double>("max_corr_dist", 0.5);
+  params_.min_overlap = declare_parameter<double>("min_overlap", 0.5);
+  params_.max_rmse = declare_parameter<double>("max_rmse", 0.2);
+  params_.max_step_m = declare_parameter<double>("max_step_m", 0.3);
+  params_.max_step_deg = declare_parameter<double>("max_step_deg", 3.0);
+  params_.min_hessian_eig = declare_parameter<double>("min_hessian_eig", 0.0);
+
+  const std::vector<double> init_pose = declare_parameter<std::vector<double>>(
+    "init_pose", {0.0, 0.0, 0.0, 0.0});
+  if (init_pose.size() != 4) {
+    throw std::invalid_argument("Parameter 'init_pose' must contain x, y, z, and yaw");
+  }
+  params_.init_pose = Eigen::Vector4d(
+    init_pose[0], init_pose[1], init_pose[2], init_pose[3]);
+  params_.init_yaw_steps = declare_parameter<int>("init_yaw_steps", 12);
+  params_.lost_after_s = declare_parameter<double>("lost_after_s", 5.0);
+  params_.max_rejected_steps = declare_parameter<int>("max_rejected_steps", 3);
 }
 
 void MapLocalizer::load_map()

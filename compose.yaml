@@ -30,8 +30,14 @@ services:
     volumes:
       - ./config:/config:ro
       - ${MAP_DIR:?set MAP_DIR in .env}/${MAP_SITE:?set MAP_SITE in .env}:/map:ro
-    # TODO(step 2): the node's command. Follow mullet-localization's fast_lio service:
-    #   D=$${DRONE_ID:?...} && exec ros2 run map_localizer map_localizer_node --ros-args
-    #   -r __ns:=/$$D --params-file /config/map_localizer.yaml -p map_path:=/map/map.pcd
-    #   plus the remaps that put TF on /$$D/tf (and /tf_static on /$$D/tf_static).
-    # Until then the image's CMD runs.
+    command:
+      - sh
+      - -c
+      - >-
+        D=$${DRONE_ID:?set DRONE_ID in /etc/mullet/drone.env} &&
+        exec ros2 run map_localizer map_localizer_node --ros-args
+        -r __ns:=/$$D
+        --params-file /config/map_localizer.yaml
+        -p map_path:=/map/map.pcd
+        -r /tf:=/$$D/tf
+        -r /tf_static:=/$$D/tf_static
