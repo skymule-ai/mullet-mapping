@@ -58,7 +58,10 @@ jobs:
           cache-from: type=gha,scope=mapping
           cache-to: type=gha,mode=max,scope=mapping
 
-      # TODO(step 2): run scripts/smoke.sh with MAPPING_IMAGE=mullet-mapping-smoke:${{ github.sha }}
+      - name: Smoke test
+        run: scripts/smoke.sh
+        env:
+          MAPPING_IMAGE: mullet-mapping-smoke:${{ github.sha }}
 
       - name: Publish tested image
         uses: docker/build-push-action@v6

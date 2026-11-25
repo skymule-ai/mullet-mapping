@@ -18,9 +18,9 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 
-// TODO(step 2): small_gicp headers, once it is installed in the image:
-//   <small_gicp/points/point_cloud.hpp>, <small_gicp/ann/kdtree_omp.hpp>,
-//   <small_gicp/registration/registration_result.hpp>
+#include <small_gicp/ann/kdtree_omp.hpp>
+#include <small_gicp/points/point_cloud.hpp>
+#include <small_gicp/registration/registration_result.hpp>
 
 namespace map_localizer
 {

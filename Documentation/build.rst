@@ -10,6 +10,7 @@ Layout
     src/map_localizer/        ament_cmake package: include/, src/, test/ (gtest)
     config/map_localizer.yaml parameters with starting values
     Dockerfile                FROM mullet-base, small_gicp pinned and built from source
+    images/mapping/           image files: entrypoint.sh (Dockerfile joins when a second image comes)
     compose.yaml              the map_localizer service; reads /etc/mullet/drone.env
     .env.example              image tag and which map to load
     scripts/smoke.sh          sensor-free smoke test of the image
@@ -32,6 +33,14 @@ Build
 The image is arm64 (CUDA base), like every Mullet image. On an x86 laptop,
 build against an amd64 stand-in base (``--build-arg BASE_IMAGE=...``, see
 mullet-localization ``CLAUDE.md``).
+
+Documentation preview
+---------------------
+
+Both targets install Sphinx into ``.venv`` with uv on first use::
+
+    make livedocs    # live preview at http://127.0.0.1:8000, rebuilt on save
+    make htmldocs    # one-off build to .venv/docs-build/dirhtml/index.html
 
 
 Tests

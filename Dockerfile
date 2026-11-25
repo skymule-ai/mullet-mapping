@@ -8,18 +8,26 @@ LABEL org.opencontainers.image.description="Localization in a prior map (map_loc
 
 # Pin SMALL_GICP_REF to a full commit SHA for reproducible production images.
 ARG SMALL_GICP_REPOSITORY=https://github.com/koide3/small_gicp.git
-ARG SMALL_GICP_REF=
+ARG SMALL_GICP_REF=fd29d8cf94cf05ed7ad21c81c27b65963110adb5
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   libeigen3-dev libpcl-dev \
   ros-${ROS_DISTRO}-pcl-conversions ros-${ROS_DISTRO}-tf2-eigen \
   && rm -rf /var/lib/apt/lists/*
 
-# TODO(step 2): build small_gicp from source and install it where CMake finds it.
-#   git clone "${SMALL_GICP_REPOSITORY}" /tmp/small_gicp && git -C /tmp/small_gicp checkout "${SMALL_GICP_REF}"
-#   cmake -S /tmp/small_gicp -B /tmp/small_gicp/build -DCMAKE_BUILD_TYPE=Release (+ the OpenMP option)
-#   cmake --build ... -j"$(nproc)" && cmake --install ... && rm -rf /tmp/small_gicp
-# Fail the build if SMALL_GICP_REF is empty.
+RUN test -n "${SMALL_GICP_REF}" \
+  && git clone "${SMALL_GICP_REPOSITORY}" /tmp/small_gicp \
+  && git -C /tmp/small_gicp checkout "${SMALL_GICP_REF}" \
+  && cmake -S /tmp/small_gicp -B /tmp/small_gicp/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_HELPER=ON \
+  -DBUILD_WITH_OPENMP=ON \
+  -DBUILD_TESTS=OFF \
+  -DBUILD_PYTHON_BINDINGS=OFF \
+  && cmake --build /tmp/small_gicp/build -j"$(nproc)" \
+  && cmake --install /tmp/small_gicp/build \
+  && ldconfig \
+  && rm -rf /tmp/small_gicp
 
 COPY src /opt/mullet_ws/src
 
@@ -32,7 +40,11 @@ RUN source /usr/local/share/mullet-ros/setup.bash \
   && colcon test-result --verbose \
   && rm -rf build log
 
-# TODO(step 2): an entrypoint that sources /usr/local/share/mullet-ros/setup.bash and
-# /opt/mullet_ws/install/setup.bash, then `exec "$@"` (see mullet-lio images/fast-lio/entrypoint.sh).
-# ENTRYPOINT ["/usr/local/bin/mullet-mapping-entrypoint"]
-# CMD ["ros2", "run", "map_localizer", "map_localizer_node", "--ros-args", "--params-file", "/config/map_localizer.yaml"]
+# Sources the ROS and workspace setup files, then runs CMD.
+COPY images/mapping/entrypoint.sh /usr/local/bin/mullet-mapping-entrypoint
+
+RUN chmod 0755 /usr/local/bin/mullet-mapping-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/mullet-mapping-entrypoint"]
+
+CMD ["ros2", "run", "map_localizer", "map_localizer_node", "--ros-args", "--params-file", "/config/map_localizer.yaml"]

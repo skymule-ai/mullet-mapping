@@ -35,7 +35,6 @@ from the offline mapping walk. The correction goes to TF, never to PX4:
     map.pcd -------------------------+                  --> map_localizer/status
 
 * Frames and topics: Documentation/interfaces.rst
-* Flow diagram: https://claude.ai/artifact/KAzZcNzyHfuSfNPSEkoHuY
 
 
 Working on It
