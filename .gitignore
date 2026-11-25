@@ -10,3 +10,6 @@ log/
 .vscode/
 *.swp
 *~
+
+# Local docs build (Documentation/build.rst)
+.venv/

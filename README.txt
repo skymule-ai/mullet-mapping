@@ -24,46 +24,30 @@ All contributors should be familiar with:
 The full index is Documentation/index.rst.
 
 
-Who Are You?
-============
+How It Fits
+===========
 
-Find your role below:
+Scans and odometry come from FAST-LIO2 in mullet-localization. The map comes
+from the offline mapping walk. The correction goes to TF, never to PX4:
 
-* C++ Developer: writing and testing map_localizer
-* Drone Operator: running it in the field
-* Integrator: using the map correction in mullet_core, ev_bridge or a planner
+    fast_lio/cloud_registered_body --+
+    fast_lio/odometry ---------------+--> map_localizer --> tf: map -> camera_init
+    map.pcd -------------------------+                  --> map_localizer/status
 
-
-For Specific Users
-==================
-
-C++ Developer
--------------
-
-Start here:
-
-* Design: Documentation/design.rst
-* Status and next step: Documentation/status.rst
-* Build and test: Documentation/build.rst
-* Code: src/map_localizer/include/map_localizer/map_localizer.hpp
-
-Drone Operator
---------------
-
-Run and check it on a drone:
-
-* Running: Documentation/running.rst
-* Status topic: Documentation/interfaces.rst
-* Rules: Documentation/rules.rst
-
-Integrator
-----------
-
-Use map -> camera_init elsewhere in the stack:
-
-* Interfaces and frames: Documentation/interfaces.rst
-* Option A and Option B: Documentation/design.rst
+* Frames and topics: Documentation/interfaces.rst
 * Flow diagram: https://claude.ai/artifact/KAzZcNzyHfuSfNPSEkoHuY
+
+
+Working on It
+=============
+
+One step at a time, from Documentation/status.rst:
+
+* Find the work: grep -rn "TODO(step N)"
+* Write the unit test first, if the step has pure math
+* Build and test: docker compose build (runs the unit tests), then scripts/smoke.sh
+* Done when its TODOs are gone and its check passes; tick it in status.rst
+* Design changes go in Documentation/design.rst, in the same commit
 
 
 Related Repositories
