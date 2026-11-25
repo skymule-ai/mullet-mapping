@@ -8,20 +8,20 @@ odometry frame sits in that map. It runs on the Orin and never writes to PX4.
 Quick Start
 -----------
 
-* Build the image: [Documentation/build.rst](Documentation/build.rst)
-* Run it on a drone: [Documentation/running.rst](Documentation/running.rst)
-* See what is left to do: [Documentation/status.rst](Documentation/status.rst)
+* Build the image: Documentation/build.rst
+* Run it on a drone: Documentation/running.rst
+* See what is left to do: Documentation/status.rst
 
 Essential Documentation
 -----------------------
 
 All contributors should be familiar with:
 
-* Design: [Documentation/design.rst](Documentation/design.rst)
-* Interfaces: [Documentation/interfaces.rst](Documentation/interfaces.rst)
-* Rules: [Documentation/rules.rst](Documentation/rules.rst)
+* Design: Documentation/design.rst
+* Interfaces: Documentation/interfaces.rst
+* Rules: Documentation/rules.rst
 
-The full index is [Documentation/index.rst](Documentation/index.rst).
+The full index is Documentation/index.rst.
 
 
 Who Are You?
@@ -42,36 +42,36 @@ C++ Developer
 
 Start here:
 
-* Design: [Documentation/design.rst](Documentation/design.rst)
-* Status and next step: [Documentation/status.rst](Documentation/status.rst)
-* Build and test: [Documentation/build.rst](Documentation/build.rst)
-* Code: [src/map_localizer/include/map_localizer/map_localizer.hpp](src/map_localizer/include/map_localizer/map_localizer.hpp)
+* Design: Documentation/design.rst
+* Status and next step: Documentation/status.rst
+* Build and test: Documentation/build.rst
+* Code: src/map_localizer/include/map_localizer/map_localizer.hpp
 
 Drone Operator
 --------------
 
 Run and check it on a drone:
 
-* Running: [Documentation/running.rst](Documentation/running.rst)
-* Status topic: [Documentation/interfaces.rst](Documentation/interfaces.rst)
-* Rules: [Documentation/rules.rst](Documentation/rules.rst)
+* Running: Documentation/running.rst
+* Status topic: Documentation/interfaces.rst
+* Rules: Documentation/rules.rst
 
 Integrator
 ----------
 
 Use map -> camera_init elsewhere in the stack:
 
-* Interfaces and frames: [Documentation/interfaces.rst](Documentation/interfaces.rst)
-* Option A and Option B: [Documentation/design.rst](Documentation/design.rst)
-* Flow diagram: [Mullet Map Localization Flow](https://claude.ai/artifact/KAzZcNzyHfuSfNPSEkoHuY)
+* Interfaces and frames: Documentation/interfaces.rst
+* Option A and Option B: Documentation/design.rst
+* Flow diagram: https://claude.ai/artifact/KAzZcNzyHfuSfNPSEkoHuY
 
 
 Related Repositories
 ====================
 
-* mullet-localization: [sensors, FAST-LIO2, ev_bridge, recording](https://github.com/skymule-ai/mullet-localization)
-* mullet-lio: [the FAST-LIO2 image](https://github.com/skymule-ai/mullet-lio)
-* mullet-core: [offboard supervisor](https://github.com/skymule-ai/mullet-core)
-* mullet-setup: [the drone's identity, /etc/mullet/drone.env](https://github.com/skymule-ai/mullet-setup)
-* mullet-wiki: [SLAM and mapping](https://github.com/skymule-ai/mullet-wiki/blob/main/docs/concepts/slam-and-mapping.md)
-* ergodic_mppi: [the planner that will plan in map](https://github.com/skymule-ai/ergodic_mppi)
+* Sensors, FAST-LIO2, ev_bridge, recording: https://github.com/skymule-ai/mullet-localization
+* FAST-LIO2 image: https://github.com/skymule-ai/mullet-lio
+* Offboard supervisor: https://github.com/skymule-ai/mullet-core
+* Drone identity (/etc/mullet/drone.env): https://github.com/skymule-ai/mullet-setup
+* SLAM and mapping: https://github.com/skymule-ai/mullet-wiki/blob/main/docs/concepts/slam-and-mapping.md
+* Planner: https://github.com/skymule-ai/ergodic_mppi
