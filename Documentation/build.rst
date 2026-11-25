@@ -34,6 +34,14 @@ The image is arm64 (CUDA base), like every Mullet image. On an x86 laptop,
 build against an amd64 stand-in base (``--build-arg BASE_IMAGE=...``, see
 mullet-localization ``CLAUDE.md``).
 
+Documentation preview
+---------------------
+
+Both targets install Sphinx into ``.venv`` with uv on first use::
+
+    make livedocs    # live preview at http://127.0.0.1:8000, rebuilt on save
+    make htmldocs    # one-off build to .venv/docs-build/dirhtml/index.html
+
 
 Tests
 -----
