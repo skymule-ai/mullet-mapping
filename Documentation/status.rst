@@ -13,8 +13,8 @@ Build-out
     starts
 3.  [x] Map: load ``map.pcd``, downsample, build the target (covariances,
     KD-tree)
-4.  [ ] Submap: stack ~1 s of scans in ``camera_init`` with their time-matched
-    odometry
+4.  [x] Submap: stack ~1 s of scans, each with the odometry of its stamp, in the
+    newest scan's body frame
 5.  [ ] Align: GICP from the predicted ``map -> body``
 6.  [ ] Gate: overlap, RMSE, step size, degeneracy
 7.  [ ] States: INIT (yaw search), TRACKING, HOLDING, LOST

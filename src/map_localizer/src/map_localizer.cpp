@@ -2,12 +2,16 @@
 // Unwritten functions throw, so nothing silently returns a made-up pose.
 #include "map_localizer/map_localizer.hpp"
 
-#include <stdexcept>
-#include <vector>
 #include <cmath>
+#include <stdexcept>
+#include <tuple>
+#include <utility>
+
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <small_gicp/registration/registration_helper.hpp>
+#include <tf2_eigen/tf2_eigen.hpp>
 
 namespace map_localizer
 {
@@ -61,6 +65,24 @@ State next_state(
   todo("next_state");
 }
 
+std::vector<Eigen::Vector4d> stack_points(const std::deque<Scan> & scans)
+{
+  if (scans.empty()) return {};
+
+  size_t total = 0;
+  for (const auto & scan : scans) { total += scan.points.size(); }
+  std::vector<Eigen::Vector4d> points;
+  points.reserve(total);
+
+  // T_ref_odom = T_odom_body(newest)⁻¹; each scan goes through T_ref_odom · T_odom_body(scan).
+  const Eigen::Isometry3d T_ref_odom = scans.back().T_odom_body.inverse();
+  for (const auto & scan : scans) {
+    const Eigen::Matrix4d T_ref_scan = (T_ref_odom * scan.T_odom_body).matrix();
+    for (const auto & point : scan.points) { points.push_back(T_ref_scan * point); }
+  }
+  return points;
+}
+
 // ── The node ──────────────────────────────────────────────────────────────────
 
 MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
@@ -69,10 +91,24 @@ MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
   declare_parameters();
   RCLCPP_INFO(get_logger(), "map_localizer started with map path: %s", params_.map_path.c_str());
   load_map();
-  // TODO(step 4): subscriptions, relative names so the namespace applies:
-  //   "fast_lio/cloud_registered_body" -> on_scan, "fast_lio/odometry" -> on_odometry (SensorDataQoS).
-  // TODO(step 8): status publisher "map_localizer/status", the TF broadcaster.
-  // TODO(steps 4–8): match_timer_ at match_rate -> on_match_timer, tf_timer_ at tf_rate -> publish_tf.
+
+  // Each scan with the odometry of the same stamp (FAST-LIO2 stamps both with lidar_end_time).
+  // Relative names, so the /$DRONE_ID namespace applies.
+  scan_sub_.subscribe(this, "fast_lio/cloud_registered_body", rmw_qos_profile_sensor_data);
+  odometry_sub_.subscribe(this, "fast_lio/odometry", rmw_qos_profile_sensor_data);
+  sync_ = std::make_unique<message_filters::TimeSynchronizer<
+        sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>>(
+    scan_sub_, odometry_sub_, params_.sync_queue_size);
+  sync_->registerCallback(std::bind(
+      &MapLocalizer::on_scan, this, std::placeholders::_1, std::placeholders::_2));
+
+  // The node's clock, so a bag replayed with use_sim_time matches once per second of bag time.
+  match_timer_ = rclcpp::create_timer(
+    this, get_clock(), rclcpp::Duration::from_seconds(1.0 / params_.match_rate),
+    std::bind(&MapLocalizer::on_match_timer, this));
+
+  // TODO(step 8): status publisher "map_localizer/status", the TF broadcaster,
+  //   tf_timer_ at tf_rate -> publish_tf.
 }
 
 void MapLocalizer::declare_parameters()
@@ -94,6 +130,11 @@ void MapLocalizer::declare_parameters()
     throw std::invalid_argument("Parameter 'tf_rate' must be positive");
   }
   params_.tf_rate = tf_rate;
+  const int64_t sync_queue_size = declare_parameter<int64_t>("sync_queue_size", 10);
+  if (sync_queue_size < 1 || sync_queue_size > 100) {
+    throw std::invalid_argument("Parameter 'sync_queue_size' must be between 1 and 100");
+  }
+  params_.sync_queue_size = static_cast<uint32_t>(sync_queue_size);
   params_.max_corr_dist = declare_parameter<double>("max_corr_dist", 0.5);
   params_.min_overlap = declare_parameter<double>("min_overlap", 0.5);
   params_.max_rmse = declare_parameter<double>("max_rmse", 0.2);
@@ -115,50 +156,76 @@ void MapLocalizer::declare_parameters()
 
 void MapLocalizer::load_map()
 {
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
-
-  if (pcl::io::loadPCDFile<pcl::PointXYZ> (params_.map_path, *cloud) < 0) //* load the file
-  {
+  pcl::PointCloud<pcl::PointXYZ> cloud;
+  if (pcl::io::loadPCDFile<pcl::PointXYZ>(params_.map_path, cloud) < 0) {
     throw std::runtime_error("Couldn't read map file " + params_.map_path);
   }
 
   std::vector<Eigen::Vector4f> points;
-  points.reserve(cloud->size());
-
-  for (size_t i = 0; i < cloud->size(); ++i)
-  {
-    const auto & pt = cloud->at(i);
-    if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) continue;
-    points.emplace_back(Eigen::Vector4f(pt.x, pt.y, pt.z, 1.0f));
+  points.reserve(cloud.size());
+  for (const auto & pt : cloud) {
+    if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) { continue; }
+    points.emplace_back(pt.x, pt.y, pt.z, 1.0f);
   }
-
-  if (points.empty())
-  {
+  if (points.empty()) {
     throw std::runtime_error("Map is empty after filtering invalid points");
   }
 
-  std::tie(map_, map_kdtree_) = small_gicp::preprocess_points(points, params_.map_voxel); // preprocess and downsampling
-  RCLCPP_INFO(get_logger(), "Loaded map with %zu points, downsampled to %zu points",
-              points.size(), map_->size());
+  // Downsample, KD-tree, per-point covariances: the GICP target.
+  std::tie(map_, map_kdtree_) = small_gicp::preprocess_points(points, params_.map_voxel);
+  RCLCPP_INFO(
+    get_logger(), "Loaded map with %zu points, downsampled to %zu points",
+    points.size(), map_->size());
 }
 
-void MapLocalizer::on_scan(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg)
+void MapLocalizer::on_scan(
+  const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
+  const nav_msgs::msg::Odometry::ConstSharedPtr & odom)
 {
-  // TODO(step 4): find the odometry with the same stamp (FAST-LIO publishes both per scan), keep
-  //   {stamp, T_odom_body, points}; drop scans older than submap_window_s.
-  (void)msg;
+  // cloud_registered (already in camera_init) wired by mistake would otherwise stack silently.
+  if (msg->header.frame_id != params_.body_frame ||
+    odom->header.frame_id != params_.odom_frame ||
+    odom->child_frame_id != params_.body_frame)
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Frame mismatch: scan in '%s', odometry '%s' -> '%s'; expected '%s', '%s' -> '%s'",
+      msg->header.frame_id.c_str(), odom->header.frame_id.c_str(), odom->child_frame_id.c_str(),
+      params_.body_frame.c_str(), params_.odom_frame.c_str(), params_.body_frame.c_str());
+    return;
+  }
+
+  Scan scan;
+  scan.stamp = msg->header.stamp;
+  tf2::fromMsg(odom->pose.pose, scan.T_odom_body);
+  scan.points.reserve(msg->width * msg->height);
+  sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+  sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+  sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+  for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+    if (!std::isfinite(*iter_x) || !std::isfinite(*iter_y) || !std::isfinite(*iter_z)) { continue; }
+    scan.points.emplace_back(*iter_x, *iter_y, *iter_z, 1.0);
+  }
+
+  // A bag that loops or a sim time reset: the old scans belong to another trajectory.
+  if (!scans_.empty() && scan.stamp < scans_.back().stamp) {
+    RCLCPP_WARN(get_logger(), "Time went backwards: dropping %zu scans", scans_.size());
+    scans_.clear();
+  }
+  scans_.push_back(std::move(scan));
+
+  // Keep submap_window_s, measured in message stamps (never now(), so a replay behaves the same).
+  const rclcpp::Time newest = scans_.back().stamp;
+  while ((newest - scans_.front().stamp).seconds() > params_.submap_window_s) {
+    scans_.pop_front();
+  }
 }
 
-void MapLocalizer::on_odometry(const nav_msgs::msg::Odometry::ConstSharedPtr & msg)
+small_gicp::PointCloud::Ptr MapLocalizer::stack_submap()
 {
-  // TODO(step 4): append to odometry_, keep a few seconds.
-  (void)msg;
-}
-
-void MapLocalizer::stack_submap()
-{
-  // TODO(step 4): transform each kept scan by its T_odom_body into odom_frame, merge, downsample
-  //   (submap_voxel). The submap's reference pose is the newest scan's T_odom_body.
+  if (scans_.empty()) { return nullptr; }
+  // Downsample, then covariances for GICP; the source does not need the KD-tree.
+  return small_gicp::preprocess_points(stack_points(scans_), params_.submap_voxel).first;
 }
 
 void MapLocalizer::align()
@@ -176,9 +243,14 @@ void MapLocalizer::initialize()
 
 void MapLocalizer::on_match_timer()
 {
-  // TODO(steps 4–7): state_ == INIT -> initialize(); else stack_submap(), align(), step_between,
-  //   passes_gate, on pass T_map_odom_ = compose_correction(...), state_ = next_state(...),
-  //   publish_status(...).
+  // TODO(steps 5–7): state_ == INIT -> initialize(); else align(), step_between, passes_gate,
+  //   on pass T_map_odom_ = compose_correction(...), state_ = next_state(...), publish_status(...).
+  const small_gicp::PointCloud::Ptr submap = stack_submap();
+  if (!submap) { return; }
+  // TODO(step 5): replace this log with align().
+  RCLCPP_INFO(
+    get_logger(), "Submap: %zu scans over %.2f s, %zu points", scans_.size(),
+    (scans_.back().stamp - scans_.front().stamp).seconds(), submap->size());
 }
 
 void MapLocalizer::publish_tf()

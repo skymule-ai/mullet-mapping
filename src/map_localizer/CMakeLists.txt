@@ -13,6 +13,7 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
+find_package(message_filters REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -33,6 +34,7 @@ ament_target_dependencies(${PROJECT_NAME}_lib
   sensor_msgs
   geometry_msgs
   diagnostic_msgs
+  message_filters
   tf2_ros
   tf2_eigen
   pcl_conversions

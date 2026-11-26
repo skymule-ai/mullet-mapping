@@ -6,13 +6,17 @@
 // TODO(step N) markers match the steps in Documentation/status.rst.
 #pragma once
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <Eigen/Geometry>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -39,6 +43,7 @@ struct Params
   double submap_voxel;      // m
   double match_rate;        // Hz
   double tf_rate;           // Hz
+  uint32_t sync_queue_size; // scans or odometry held while waiting for their pair
   double max_corr_dist;     // m
   double min_overlap;       // fraction
   double max_rmse;          // m
@@ -59,7 +64,19 @@ struct MatchQuality
   double min_eig;        // smallest eigenvalue of the translation block of the GICP Hessian
 };
 
-// ── Pure math (step 5–7), tested in test/test_map_localizer.cpp ──────────────
+// One FAST-LIO2 scan with the odometry of the same stamp.
+struct Scan
+{
+  rclcpp::Time stamp;
+  Eigen::Isometry3d T_odom_body;        // camera_init -> body at stamp
+  std::vector<Eigen::Vector4d> points;  // in body, w = 1
+};
+
+// ── Pure math (steps 4–7), tested in test/test_map_localizer.cpp ─────────────
+
+// Every point of every scan in the newest scan's body frame: T_ref⁻¹ · T_odom_body · p, with
+// T_ref the newest scan's T_odom_body. Empty for no scans. (step 4)
+std::vector<Eigen::Vector4d> stack_points(const std::deque<Scan> & scans);
 
 // T_map_odom = T_map_body · T_odom_body⁻¹. Both body poses at the same stamp. (step 5)
 Eigen::Isometry3d compose_correction(
@@ -95,15 +112,15 @@ private:
   // Read map.pcd, downsample to map_voxel, build the GICP target (covariances, KD-tree). (step 3)
   void load_map();
 
-  // Cloud callback: pair the scan with the odometry of the same stamp and keep it in scans_. (step 4)
-  void on_scan(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg);
+  // A scan and its odometry, same stamp (the synchronizer pairs them): keep the last
+  // submap_window_s in scans_. Drops scans in unexpected frames; clears on time going back. (step 4)
+  void on_scan(
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
+    const nav_msgs::msg::Odometry::ConstSharedPtr & odom);
 
-  // Odometry callback: keep a short history to look up T_odom_body at a scan's stamp. (step 4)
-  void on_odometry(const nav_msgs::msg::Odometry::ConstSharedPtr & msg);
-
-  // The last submap_window_s of scans, in odom_frame, downsampled to submap_voxel. (step 4)
-  // TODO(step 4): return type: a small_gicp point cloud.
-  void stack_submap();
+  // The last submap_window_s of scans in the newest scan's body frame, downsampled to
+  // submap_voxel, with covariances: the GICP source. nullptr until a scan has arrived. (step 4)
+  small_gicp::PointCloud::Ptr stack_submap();
 
   // GICP of the submap against the map from an initial guess; fills the quality. (step 5)
   // TODO(step 5): signature with the submap and the guess; returns T_map_body + MatchQuality.
@@ -129,11 +146,14 @@ private:
 
   small_gicp::PointCloud::Ptr map_;
   std::shared_ptr<small_gicp::KdTree<small_gicp::PointCloud>> map_kdtree_;
-  // TODO(step 4): scans_ (each scan with its T_odom_body and stamp) and the odometry history.
-  std::deque<nav_msgs::msg::Odometry::ConstSharedPtr> odometry_;
+  std::deque<Scan> scans_;  // oldest first, the last submap_window_s
 
-  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr scan_sub_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_sub_;
+  // sync_ after the subscribers: it is destroyed first, while they still exist.
+  message_filters::Subscriber<sensor_msgs::msg::PointCloud2> scan_sub_;
+  message_filters::Subscriber<nav_msgs::msg::Odometry> odometry_sub_;
+  std::unique_ptr<message_filters::TimeSynchronizer<
+      sensor_msgs::msg::PointCloud2, nav_msgs::msg::Odometry>> sync_;
+
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr status_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr match_timer_;

@@ -14,6 +14,7 @@
     # Loop
     match_rate: 1.0                 # Hz
     tf_rate: 10.0                   # Hz, re-send of the last good map -> camera_init
+    sync_queue_size: 10             # scans or odometry held while waiting for their pair
 
     # Gate
     max_corr_dist: 0.5              # m, a point within this of the map counts as overlap
