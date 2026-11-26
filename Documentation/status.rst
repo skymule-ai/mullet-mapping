@@ -11,7 +11,7 @@ Build-out
 1.  [x] Reference: README.md, Documentation/, scaffolding
 2.  [x] Skeleton: package, Dockerfile, compose, CI build in the image; the node
     starts
-3.  [ ] Map: load ``map.pcd``, downsample, build the target (covariances,
+3.  [x] Map: load ``map.pcd``, downsample, build the target (covariances,
     KD-tree)
 4.  [ ] Submap: stack ~1 s of scans in ``camera_init`` with their time-matched
     odometry

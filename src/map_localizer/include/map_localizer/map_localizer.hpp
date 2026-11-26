@@ -127,7 +127,8 @@ private:
   rclcpp::Time last_pass_;
   int rejected_steps_in_a_row_{0};
 
-  // TODO(step 3): the map (small_gicp point cloud + KD-tree).
+  small_gicp::PointCloud::Ptr map_;
+  std::shared_ptr<small_gicp::KdTree<small_gicp::PointCloud>> map_kdtree_;
   // TODO(step 4): scans_ (each scan with its T_odom_body and stamp) and the odometry history.
   std::deque<nav_msgs::msg::Odometry::ConstSharedPtr> odometry_;
 
