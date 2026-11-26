@@ -4,6 +4,10 @@
 
 #include <stdexcept>
 #include <vector>
+#include <cmath>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <small_gicp/registration/registration_helper.hpp>
 
 namespace map_localizer
 {
@@ -64,7 +68,7 @@ MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
 {
   declare_parameters();
   RCLCPP_INFO(get_logger(), "map_localizer started with map path: %s", params_.map_path.c_str());
-  // TODO(step 3): load_map(); fail fast (throw) if the file is missing or empty.
+  load_map();
   // TODO(step 4): subscriptions, relative names so the namespace applies:
   //   "fast_lio/cloud_registered_body" -> on_scan, "fast_lio/odometry" -> on_odometry (SensorDataQoS).
   // TODO(step 8): status publisher "map_localizer/status", the TF broadcaster.
@@ -111,8 +115,31 @@ void MapLocalizer::declare_parameters()
 
 void MapLocalizer::load_map()
 {
-  // TODO(step 3): pcl::io::loadPCDFile -> small_gicp cloud -> voxel downsample (map_voxel) ->
-  //   KD-tree -> per-point covariances (GICP needs them). Log the point counts before and after.
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+
+  if (pcl::io::loadPCDFile<pcl::PointXYZ> (params_.map_path, *cloud) < 0) //* load the file
+  {
+    throw std::runtime_error("Couldn't read map file " + params_.map_path);
+  }
+
+  std::vector<Eigen::Vector4f> points;
+  points.reserve(cloud->size());
+
+  for (size_t i = 0; i < cloud->size(); ++i)
+  {
+    const auto & pt = cloud->at(i);
+    if (!std::isfinite(pt.x) || !std::isfinite(pt.y) || !std::isfinite(pt.z)) continue;
+    points.emplace_back(Eigen::Vector4f(pt.x, pt.y, pt.z, 1.0f));
+  }
+
+  if (points.empty())
+  {
+    throw std::runtime_error("Map is empty after filtering invalid points");
+  }
+
+  std::tie(map_, map_kdtree_) = small_gicp::preprocess_points(points, params_.map_voxel); // preprocess and downsampling
+  RCLCPP_INFO(get_logger(), "Loaded map with %zu points, downsampled to %zu points",
+              points.size(), map_->size());
 }
 
 void MapLocalizer::on_scan(const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg)
