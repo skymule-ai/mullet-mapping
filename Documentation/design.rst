@@ -48,9 +48,11 @@ See interfaces.rst for names and types. Why each one:
 The Loop, at 1 Hz
 -----------------
 
-1. Submap. Keep the last ~1 s of scans (about 10). Transform each into
-   ``camera_init`` with the odometry of the same stamp. One MID-360 scan is
-   sparse; ten give a stable match.
+1. Submap. Keep the last ~1 s of scans (about 10), each with the odometry of
+   the same stamp. Transform each into the newest scan's body frame,
+   ``T_odom_body(newest)^-1 * T_odom_body(scan)``, so the match gives
+   ``T_map_body`` at that stamp directly. One MID-360 scan is sparse; ten give
+   a stable match.
 2. Downsample the submap to ``submap_voxel`` (0.1-0.2 m).
 3. Predict ``T_map_body = T_map_odom(last good) * T_odom_body(now)``. Off only
    by the drift since the last match: a few cm.
