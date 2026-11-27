@@ -2,8 +2,9 @@
 #include "map_localizer/map_localizer.hpp"
 
 #include <chrono>
-#include <limits>
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -186,6 +187,16 @@ void MapLocalizer::declare_parameters()
   params_.max_step_m = declare_parameter<double>("max_step_m", 0.3);
   params_.max_step_deg = declare_parameter<double>("max_step_deg", 3.0);
   params_.min_hessian_eig = declare_parameter<double>("min_hessian_eig", 0.0);
+  const double lost_max_step_m = declare_parameter<double>("lost_max_step_m", 2.0);
+  if (lost_max_step_m <= 0.0) {
+    throw std::invalid_argument("Parameter 'lost_max_step_m' must be positive");
+  }
+  params_.lost_max_step_m = lost_max_step_m;
+  const double lost_max_step_deg = declare_parameter<double>("lost_max_step_deg", 10.0);
+  if (lost_max_step_deg <= 0.0) {
+    throw std::invalid_argument("Parameter 'lost_max_step_deg' must be positive");
+  }
+  params_.lost_max_step_deg = lost_max_step_deg;
 
   const std::vector<double> init_pose = declare_parameter<std::vector<double>>(
     "init_pose", {0.0, 0.0, 0.0, 0.0});
@@ -324,14 +335,42 @@ Match MapLocalizer::align(
 
 void MapLocalizer::initialize()
 {
-  // init_yaw_steps yaw seeds about the body at the predicted pose; the best quality pass wins,
-  //   unless another pass disagrees by more than a step. From INIT and LOST alike.
+  // LOST first tries the predicted pose alone (within lost_max_step_* of the last good correction).
+  // Otherwise init_yaw_steps yaw seeds about the body at the predicted pose; the best quality pass
+  //   wins, unless another pass disagrees by more than a step.
   const small_gicp::PointCloud::Ptr submap = stack_submap();
   if (!submap || submap->empty()) { return; }
 
   const Eigen::Isometry3d T_odom_body = scans_.back().T_odom_body;
   const Eigen::Isometry3d center = predict(T_map_odom_, T_odom_body); // T_map_body
   last_matched_stamp_ = scans_.back().stamp;
+
+  // Coarse to fine from one guess; the candidate correction and its overlap if the quality passes.
+  auto try_seed = [&](const Eigen::Isometry3d & guess)
+    -> std::optional<std::pair<Eigen::Isometry3d, double>> {
+      Match match{guess, MatchQuality{}};
+      for (const double corr : params_.search_corr_dists) {
+        match = align(*submap, match.T_map_body, corr);
+      }
+      match = align(*submap, match.T_map_body, params_.max_corr_dist);
+      if (!passes_gate(match.quality, Step{}, params_)) { return std::nullopt; }
+      return std::make_pair(
+        compose_correction(match.T_map_body, T_odom_body), match.quality.overlap);
+    };
+
+  // LOST: the last good correction has only drifted at FAST-LIO's rate; try it before the ring.
+  if (state_ == State::LOST) {
+    if (const auto found = try_seed(center)) {
+      const Step s = step_between(T_map_odom_, found->first);
+      if (s.meters <= params_.lost_max_step_m && s.degrees <= params_.lost_max_step_deg) {
+        T_map_odom_ = found->first;
+        last_pass_ = now();
+        rejected_steps_in_a_row_ = 0;
+        state_ = State::TRACKING;
+        return;
+      }
+    }
+  }
 
   std::vector<std::pair<Eigen::Isometry3d, double>> passing;
 
@@ -340,16 +379,7 @@ void MapLocalizer::initialize()
     Eigen::Isometry3d guess = center;
     guess.linear() =
       Eigen::AngleAxisd(yaw_rad, Eigen::Vector3d::UnitZ()).toRotationMatrix() * center.linear();
-    // Coarse to fine: each stage from the last one's result; the gate judges the final stage.
-    Match match{guess, MatchQuality{}};
-    for (const double corr : params_.search_corr_dists) {
-      match = align(*submap, match.T_map_body, corr);
-    }
-    match = align(*submap, match.T_map_body, params_.max_corr_dist);
-    const Eigen::Isometry3d candidate = compose_correction(match.T_map_body, T_odom_body);
-    if (passes_gate(match.quality, Step{}, params_)) {
-      passing.push_back({candidate, match.quality.overlap});
-    }
+    if (const auto found = try_seed(guess)) { passing.push_back(*found); }
   }
   if (!passing.empty()) {
     std::sort(passing.begin(), passing.end(),

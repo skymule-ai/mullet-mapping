@@ -130,6 +130,11 @@ The Search (INIT and LOST)
 
 Run on every tick while in INIT or LOST:
 
+0. LOST only: align the predicted pose alone (the last good correction has only
+   drifted at FAST-LIO2's rate). If it passes the quality checks and is within
+   ``lost_max_step_m`` (2 m) and ``lost_max_step_deg`` (10 deg) of the last
+   good correction, it wins: TRACKING, no ring. Otherwise steps 1 to 5.
+
 1. Predict the body pose in the map from the current correction and odometry.
    In INIT the correction is ``init_pose`` (x, y, z, yaw of camera_init in
    ``map``; identity by default, takeoff from the mapping walk's start). In
@@ -153,8 +158,8 @@ A search needs a scan newer than the last match or search: after a gap the
 old scans are still stacked, and matching them would only confirm where the
 drone was before it.
 
-Cost: up to ``init_yaw_steps`` x 3 alignments per tick in INIT and LOST (measured in
-step 10).
+Cost: up to ``init_yaw_steps`` x 3 alignments per tick in INIT; in LOST
+usually 3, the ring only when step 0 fails (measured in step 10).
 
 
 Not in Scope

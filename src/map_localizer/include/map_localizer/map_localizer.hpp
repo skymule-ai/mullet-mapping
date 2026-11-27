@@ -49,6 +49,8 @@ struct Params
   double max_step_m;        // m
   double max_step_deg;      // deg
   double min_hessian_eig;   // GICP Hessian, translation block
+  double lost_max_step_m;   // m, LOST shortcut: largest move from the last good correction
+  double lost_max_step_deg; // deg
   Eigen::Vector4d init_pose;  // x, y, z (m), yaw (deg)
   int init_yaw_steps;
   std::vector<double> search_corr_dists;  // m, coarse search stages before max_corr_dist
@@ -141,7 +143,8 @@ private:
     double max_correspondence_distance) const;
 
   // INIT and LOST: init_yaw_steps yaw seeds about the predicted body, each aligned coarse to fine
-  // (search_corr_dists, then max_corr_dist); keep the best. Marks the newest scan as matched.
+  // (search_corr_dists, then max_corr_dist); keep the best. LOST tries the predicted pose alone
+  // first. Marks the newest scan as matched.
   void initialize();
 
   // The 1 Hz loop: stack, predict, align, gate, update state and correction.
