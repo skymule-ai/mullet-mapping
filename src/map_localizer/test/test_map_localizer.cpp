@@ -6,12 +6,45 @@
 
 using map_localizer::Params;
 
-// TODO(step 5): with a known T_map_odom and any T_odom_body, compose_correction(predict(T_map_odom,
-//   T_odom_body), T_odom_body) gives back T_map_odom (isApprox).
-TEST(Correction, RoundTripsThroughPredict) { GTEST_SKIP() << "TODO(step 5)"; }
+using map_localizer::compose_correction;
+using map_localizer::predict;
 
-// TODO(step 5): identity odometry -> the correction equals the matched map -> body pose.
-TEST(Correction, IdentityOdometry) { GTEST_SKIP() << "TODO(step 5)"; }
+// Rotations about tilted axes do not commute, so a product in the wrong order cannot round-trip.
+TEST(Correction, RoundTripsThroughPredict)
+{
+  const Eigen::Isometry3d T_map_odom = Eigen::Translation3d(1, 2, 3) *
+    Eigen::AngleAxisd(0.5, Eigen::Vector3d(1, 1, 0).normalized());
+  const Eigen::Isometry3d T_odom_body = Eigen::Translation3d(-4, 0.5, 2) *
+    Eigen::AngleAxisd(1.2, Eigen::Vector3d(0, 1, 1).normalized());
+
+  const Eigen::Isometry3d back = compose_correction(predict(T_map_odom, T_odom_body), T_odom_body);
+
+  EXPECT_TRUE(back.isApprox(T_map_odom)) << back.matrix();
+}
+
+TEST(Correction, IdentityOdometry)
+{
+  const Eigen::Isometry3d T_map_body = Eigen::Translation3d(5, -1, 0.5) *
+    Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitZ());
+
+  EXPECT_TRUE(compose_correction(T_map_body, Eigen::Isometry3d::Identity()).isApprox(T_map_body));
+}
+
+// The round trip passes for predict = T_odom_body · T_map_odom too; this one does not.
+TEST(Correction, PredictByHand)
+{
+  // camera_init at map (10, 0, 0), yawed +90°: odom +x is map +y
+  const Eigen::Isometry3d T_map_odom =
+    Eigen::Translation3d(10, 0, 0) * Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());
+  // body 1 m along odom x
+  const Eigen::Isometry3d T_odom_body(Eigen::Translation3d(1, 0, 0));
+
+  const Eigen::Isometry3d T_map_body = predict(T_map_odom, T_odom_body);
+
+  // 1 m along map +y from (10, 0, 0); the wrong order gives (11, 0, 0)
+  EXPECT_TRUE(T_map_body.translation().isApprox(Eigen::Vector3d(10, 1, 0)))
+    << T_map_body.translation().transpose();
+}
 
 // TODO(step 6): 0.2 m and 2 deg apart -> step_between reports those numbers.
 TEST(Step, MetersAndDegrees) { GTEST_SKIP() << "TODO(step 6)"; }
