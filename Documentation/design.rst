@@ -60,15 +60,18 @@ The Loop, at 1 Hz
    at ``max_corr_dist``: the prediction is a few cm off. Overlap and RMSE come
    from a nearest-neighbour pass at the result (GICP's own error is weighted by
    the covariances, not in meters).
-5. Gate. Accept only if all hold:
+5. Gate. Accept only if all hold (limits inclusive; a NaN fails every check):
 
-   * overlap: more than ``min_overlap`` (0.5) of the points within
+   * converged: GICP converged within its iterations;
+   * overlap: at least ``min_overlap`` (0.5) of the points within
      ``max_corr_dist`` (0.5 m) of the map;
-   * RMSE of those points below ``max_rmse`` (0.2 m);
-   * step from the previous correction below ``max_step_m`` (0.3 m) and
-     ``max_step_deg`` (3 deg);
+   * RMSE of those points at most ``max_rmse`` (0.2 m);
+   * step from the previous correction at most ``max_step_m`` (0.3 m) and
+     ``max_step_deg`` (3 deg): ``previous^-1 * candidate``, both
+     ``T_map_odom``, so the body's own motion is not in it;
    * not degenerate: the smallest eigenvalue of the translation block of the
-     GICP Hessian above ``min_hessian_eig`` (a corridor leaves one axis free).
+     GICP Hessian at least ``min_hessian_eig`` (a corridor leaves one axis
+     free). 0 turns the check off until it is set from a replayed bag.
 
 6. Update on pass: ``T_map_odom = T_map_body(matched) * T_odom_body^-1``, both at
    the submap's reference stamp. On fail: keep the last good value, count it.

@@ -22,7 +22,7 @@
     max_rmse: 0.2                   # m, over the overlapping points
     max_step_m: 0.3                 # m, change from the previous correction
     max_step_deg: 3.0               # deg
-    min_hessian_eig: 0.0            # TODO(step 6): set from a corridor in a replayed bag
+    min_hessian_eig: 0.0            # TODO(step 9): set from a corridor in a replayed bag
 
     # States
     init_pose: [0.0, 0.0, 0.0, 0.0] # x, y, z (m), yaw (deg) of camera_init in map at start

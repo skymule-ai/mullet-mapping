@@ -39,18 +39,22 @@ Eigen::Isometry3d predict(const Eigen::Isometry3d & T_map_odom, const Eigen::Iso
 
 Step step_between(const Eigen::Isometry3d & previous, const Eigen::Isometry3d & candidate)
 {
-  // TODO(step 6): Δ = previous⁻¹ · candidate; meters = |Δ.translation()|,
-  //   degrees = angle of Δ.rotation() (Eigen::AngleAxisd), in degrees.
-  (void)previous; (void)candidate;
-  todo("step_between");
+  const Eigen::Isometry3d delta = previous.inverse() * candidate;
+  Step step;
+  step.meters = delta.translation().norm();
+  step.degrees = Eigen::AngleAxisd(delta.linear()).angle() * 180.0 / M_PI;
+  return step;
 }
 
 bool passes_gate(const MatchQuality & quality, const Step & step, const Params & params)
 {
-  // TODO(step 6): overlap >= min_overlap, rmse <= max_rmse, step within max_step_m and max_step_deg,
-  //   min_eig >= min_hessian_eig. All must hold.
-  (void)quality; (void)step; (void)params;
-  todo("passes_gate");
+  // Inclusive limits. Kept as >= / <= so a NaN fails: !(x > limit) would pass it.
+  return quality.overlap >= params.min_overlap &&
+         quality.rmse <= params.max_rmse &&
+         quality.converged &&
+         step.meters <= params.max_step_m &&
+         step.degrees <= params.max_step_deg &&
+         quality.min_eig >= params.min_hessian_eig;
 }
 
 State next_state(
@@ -273,7 +277,7 @@ void MapLocalizer::initialize()
 
 void MapLocalizer::on_match_timer()
 {
-  // TODO(steps 6–7): state_ == INIT -> initialize(); else align(), step_between, passes_gate,
+  // TODO(step 7): state_ == INIT -> initialize(); else align(), step_between, passes_gate,
   //   state_ = next_state(...), publish_status(...).
   const auto start = std::chrono::steady_clock::now();
   const small_gicp::PointCloud::Ptr submap = stack_submap();
@@ -285,9 +289,15 @@ void MapLocalizer::on_match_timer()
   const Match match = align(*submap, guess);
   const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
 
-  if (match.quality.converged) {
-    // TODO(step 6): only on a pass
-    T_map_odom_ = compose_correction(match.T_map_body, T_odom_body);
+  const Eigen::Isometry3d candidate = compose_correction(match.T_map_body, T_odom_body);
+  const Step step = step_between(T_map_odom_, candidate);
+  const bool passed = passes_gate(match.quality, step, params_);
+  if (passed) {
+    T_map_odom_ = candidate;
+    last_pass_ = scans_.back().stamp;
+    rejected_steps_in_a_row_ = 0;
+  } else {
+    ++rejected_steps_in_a_row_;
   }
 
   const Eigen::Matrix3d R = match.T_map_body.rotation();
@@ -296,12 +306,17 @@ void MapLocalizer::on_match_timer()
   const MatchQuality & q = match.quality;
   RCLCPP_INFO(
     get_logger(),
-    "Submap: %zu scans over %.2f s, %zu points -- [T_map_body] x: %.2f y: %.2f z: %.2f, "
-    "yaw: %.1f deg -- overlap: %.2f, rmse: %.2f, min eig: %.2f, iterations: %zu, "
-    "converged: %d, elapsed: %.3f s",
-    scans_.size(), (scans_.back().stamp - scans_.front().stamp).seconds(), submap->size(),
-    t.x(), t.y(), t.z(), yaw_deg, q.overlap, q.rmse,
-    q.min_eig, q.iterations, static_cast<int>(q.converged), elapsed.count());
+    "Submap: %zu scans over %.2f s, %zu points -- "
+    "[T_map_body] x: %.2f y: %.2f z: %.2f, yaw: %.1f deg -- "
+    "overlap: %.2f, rmse: %.2f, min eig: %.2f, iterations: %zu, "
+    "converged: %d, elapsed: %.3f s, step: %.3f m %.3f deg, passed: %d",
+    scans_.size(),
+    (scans_.back().stamp - scans_.front().stamp).seconds(),
+    submap->size(),
+    t.x(), t.y(), t.z(), yaw_deg,
+    q.overlap, q.rmse, q.min_eig, q.iterations,
+    static_cast<int>(q.converged), elapsed.count(),
+    step.meters, step.degrees, static_cast<int>(passed));
 }
 
 void MapLocalizer::publish_tf()
