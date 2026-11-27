@@ -26,6 +26,9 @@
 
     # States
     init_pose: [0.0, 0.0, 0.0, 0.0] # x, y, z (m), yaw (deg) of camera_init in map at start
-    init_yaw_steps: 12              # yaw hypotheses in INIT
+    init_yaw_steps: 12              # yaw hypotheses in INIT and LOST
+    search_corr_dists: [5.0, 1.5]   # m, coarse stages of each search alignment, before max_corr_dist
     lost_after_s: 5.0               # s without a passing match
     max_rejected_steps: 3           # large steps in a row
+    lost_max_step_m: 2.0            # m, LOST: how far the predicted pose alone may move the correction
+    lost_max_step_deg: 10.0         # deg

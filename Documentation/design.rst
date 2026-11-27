@@ -130,13 +130,23 @@ The Search (INIT and LOST)
 
 Run on every tick while in INIT or LOST:
 
+0. LOST only: align the predicted pose alone (the last good correction has only
+   drifted at FAST-LIO2's rate). If it passes the quality checks and is within
+   ``lost_max_step_m`` (2 m) and ``lost_max_step_deg`` (10 deg) of the last
+   good correction, it wins: TRACKING, no ring. Otherwise steps 1 to 5.
+
 1. Predict the body pose in the map from the current correction and odometry.
    In INIT the correction is ``init_pose`` (x, y, z, yaw of camera_init in
    ``map``; identity by default, takeoff from the mapping walk's start). In
    LOST it is the last good correction.
 2. Make ``init_yaw_steps`` (12) seeds: that pose, rotated about the body's own
    position in steps of 360 / ``init_yaw_steps`` degrees.
-3. Align the submap from each seed. Keep those that pass the gate's quality
+3. Align the submap from each seed, coarse to fine: at each of
+   ``search_corr_dists`` (5, 1.5 m), then at ``max_corr_dist``, each stage from
+   the last one's result. One stage at 0.5 m only converges from within about
+   5 deg and 1 m; the stages widen that to about 20 deg and 5 m, more than the
+   15 deg a seed can be from the truth. The gate judges the final stage.
+   Keep those that pass the gate's quality
    checks; the step is not checked, since the search expects a jump.
 4. The one with the highest overlap wins, unless another one passing is more
    than a step (``max_step_m``, ``max_step_deg``) away from it. Then the
@@ -144,8 +154,12 @@ Run on every tick while in INIT or LOST:
    next tick. Seeds that converge to the same pose agree and are fine.
 5. A winner becomes the correction; the state is TRACKING.
 
-Cost: ``init_yaw_steps`` alignments per tick in INIT and LOST (measured in
-step 10).
+A search needs a scan newer than the last match or search: after a gap the
+old scans are still stacked, and matching them would only confirm where the
+drone was before it.
+
+Cost: up to ``init_yaw_steps`` x 3 alignments per tick in INIT; in LOST
+usually 3, the ring only when step 0 fails (measured in step 10).
 
 
 Not in Scope
