@@ -82,26 +82,70 @@ The Loop, at 1 Hz
 States
 ------
 
-========  ============================  ==========================================
-State     Entered when                  Behaviour
-========  ============================  ==========================================
-INIT      start                         wide search around the initial pose:
-                                        ``init_yaw_steps`` (12) yaw hypotheses,
-                                        best one wins. Must pass before arming.
-TRACKING  a match passes the gate       normal loop
-HOLDING   a match fails                 keep the last good correction; the error
-                                        grows at the drift rate only
-LOST      no pass for                   reported; the mission layer decides
-          ``lost_after_s`` (5 s), or    (hold, land). This node never guesses.
-          ``max_rejected_steps`` (3)
-          large steps in a row
-========  ============================  ==========================================
+The node is always in one of four states. The state says whether the map ->
+camera_init correction it publishes can be trusted.
 
-From HOLDING, one pass returns to TRACKING. From LOST, only a pass under the
-INIT search does.
+========  ==========================================================
+State     Meaning
+========  ==========================================================
+INIT      Started, no match has passed yet. No correction is
+          published. The drone must not arm.
+TRACKING  The last match passed the gate. The correction is fresh.
+HOLDING   The last match failed. The last good correction is still
+          used: its error grows only at FAST-LIO2's drift rate.
+LOST      Matches failed for too long. The correction is reported as
+          untrusted; the mission layer decides (hold, land). This
+          node never picks a pose it is not sure of.
+========  ==========================================================
 
-Initial pose: identity by default (takeoff from the mapping walk's start).
-Otherwise ``init_pose`` (x, y, z, yaw in ``map``) as a parameter.
+Transitions, once per match (``match_rate``, 1 Hz)::
+
+    INIT ──search passes──> TRACKING <──pass── HOLDING
+                               │                  │
+                               └──fail──> HOLDING ┘
+                                                  │ fail, and a LOST condition
+                                                  v
+    LOST ──search passes──> TRACKING            LOST
+
+* **Pass**: the match passes every check in "Gate", the step included.
+* **Fail**: anything else. A tick with no new scan since the last match also
+  counts as a fail, so a stopped FAST-LIO2 ends in LOST instead of re-matching
+  the same old submap.
+* **LOST conditions**, checked on every fail in TRACKING or HOLDING:
+
+  * no pass for more than ``lost_after_s`` (5 s), timed with the node clock
+    (bag time when replaying with ``use_sim_time``);
+  * ``max_rejected_steps`` (3) large steps in a row. A large step is a match
+    whose quality is fine but whose step is over ``max_step_m`` or
+    ``max_step_deg``: the map keeps saying the drone is elsewhere. A poor
+    quality match breaks the run (resets the count); it is covered by the
+    time limit instead.
+
+* From TRACKING or HOLDING, one pass returns to TRACKING. From INIT and LOST,
+  only the search below leaves; a normal match never does.
+
+
+The Search (INIT and LOST)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run on every tick while in INIT or LOST:
+
+1. Predict the body pose in the map from the current correction and odometry.
+   In INIT the correction is ``init_pose`` (x, y, z, yaw of camera_init in
+   ``map``; identity by default, takeoff from the mapping walk's start). In
+   LOST it is the last good correction.
+2. Make ``init_yaw_steps`` (12) seeds: that pose, rotated about the body's own
+   position in steps of 360 / ``init_yaw_steps`` degrees.
+3. Align the submap from each seed. Keep those that pass the gate's quality
+   checks; the step is not checked, since the search expects a jump.
+4. The one with the highest overlap wins, unless another one passing is more
+   than a step (``max_step_m``, ``max_step_deg``) away from it. Then the
+   answer is ambiguous (a corridor, a symmetric room): stay, warn, try again
+   next tick. Seeds that converge to the same pose agree and are fine.
+5. A winner becomes the correction; the state is TRACKING.
+
+Cost: ``init_yaw_steps`` alignments per tick in INIT and LOST (measured in
+step 10).
 
 
 Not in Scope

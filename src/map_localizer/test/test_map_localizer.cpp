@@ -142,9 +142,55 @@ TEST(Gate, NaNFails)
   EXPECT_FALSE(passes_gate(kGood, Step{0.05, nan}, p)) << "step deg";
 }
 
-// TODO(step 7): TRACKING + fail -> HOLDING; HOLDING + pass -> TRACKING;
-//   no pass for lost_after_s -> LOST; LOST + pass outside INIT stays LOST.
-TEST(States, Transitions) { GTEST_SKIP() << "TODO(step 7)"; }
+using map_localizer::next_state;
+using map_localizer::State;
+
+namespace
+{
+Params state_params()
+{
+  Params p{};
+  p.lost_after_s = 5.0;
+  p.max_rejected_steps = 3;
+  return p;
+}
+}  // namespace
+
+// Arguments: current, passed, seconds since the last pass, large steps in a row.
+TEST(States, Transitions)
+{
+  const Params p = state_params();
+
+  // INIT and LOST are left only by initialize(); a pass of the normal loop does not move LOST.
+  EXPECT_EQ(next_state(State::INIT, false, 0.0, 0, p), State::INIT);
+  EXPECT_EQ(next_state(State::INIT, true, 0.0, 0, p), State::TRACKING);
+  EXPECT_EQ(next_state(State::LOST, true, 0.0, 0, p), State::LOST);
+  EXPECT_EQ(next_state(State::LOST, false, 10.0, 5, p), State::LOST);
+
+  EXPECT_EQ(next_state(State::TRACKING, true, 0.0, 0, p), State::TRACKING);
+  EXPECT_EQ(next_state(State::TRACKING, false, 1.0, 0, p), State::HOLDING);
+  EXPECT_EQ(next_state(State::HOLDING, true, 3.0, 2, p), State::TRACKING);
+  EXPECT_EQ(next_state(State::HOLDING, false, 4.9, 2, p), State::HOLDING);
+}
+
+// A failure that already meets a LOST condition skips HOLDING.
+TEST(States, LostConditions)
+{
+  const Params p = state_params();
+  for (State s : {State::TRACKING, State::HOLDING}) {
+    EXPECT_EQ(next_state(s, false, 1.0, 3, p), State::LOST) << "large steps";
+    EXPECT_EQ(next_state(s, false, 5.1, 0, p), State::LOST) << "time";
+  }
+}
+
+// lost_after_s is exclusive (exactly on it still holds); max_rejected_steps is inclusive.
+TEST(States, Limits)
+{
+  const Params p = state_params();
+  EXPECT_EQ(next_state(State::HOLDING, false, 5.0, 0, p), State::HOLDING);
+  EXPECT_EQ(next_state(State::HOLDING, false, 1.0, 2, p), State::HOLDING);
+  EXPECT_EQ(next_state(State::HOLDING, false, 1.0, 3, p), State::LOST);
+}
 
 using map_localizer::Scan;
 using map_localizer::stack_points;

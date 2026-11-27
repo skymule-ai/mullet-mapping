@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <Eigen/Eigenvalues>
+#include <algorithm>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
@@ -22,6 +23,17 @@ namespace map_localizer
 namespace
 {
 [[noreturn]] void todo(const char * what) { throw std::logic_error(std::string("TODO: ") + what); }
+
+const char * state_name(State state)
+{
+  switch (state) {
+    case State::INIT: return "INIT";
+    case State::TRACKING: return "TRACKING";
+    case State::HOLDING: return "HOLDING";
+    case State::LOST: return "LOST";
+  }
+  return "?";
+}
 }  // namespace
 
 // ── Pure math ─────────────────────────────────────────────────────────────────
@@ -61,11 +73,23 @@ State next_state(
   State current, bool passed, double seconds_since_last_pass, int rejected_steps_in_a_row,
   const Params & params)
 {
-  // TODO(step 7): the transitions in Documentation/design.rst "States". From LOST, only an INIT search
-  //   brings it back.
-  (void)current; (void)passed; (void)seconds_since_last_pass; (void)rejected_steps_in_a_row;
-  (void)params;
-  todo("next_state");
+  switch (current) {
+    case State::INIT:
+      if (passed) return State::TRACKING;
+      return State::INIT;
+    case State::TRACKING:
+    case State::HOLDING:
+      if (passed) return State::TRACKING;
+      if (
+        rejected_steps_in_a_row >= params.max_rejected_steps ||
+        seconds_since_last_pass > params.lost_after_s)
+      {
+        return State::LOST;
+      }
+      return State::HOLDING;
+    case State::LOST: return State::LOST;
+  }
+  throw std::logic_error("Unhandled state in next_state");
 }
 
 std::vector<Eigen::Vector4d> stack_points(const std::deque<Scan> & scans)
@@ -92,6 +116,9 @@ MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
 : Node("map_localizer", options)
 {
   declare_parameters();
+  // camera_init in map before the first match: x, y, z (m), yaw (deg) from init_pose
+  T_map_odom_ = Eigen::Translation3d(params_.init_pose.head<3>()) *
+    Eigen::AngleAxisd(params_.init_pose[3] * M_PI / 180.0, Eigen::Vector3d::UnitZ());
   RCLCPP_INFO(get_logger(), "map_localizer started with map path: %s", params_.map_path.c_str());
   load_map();
 
@@ -271,33 +298,78 @@ Match MapLocalizer::align(
 
 void MapLocalizer::initialize()
 {
-  // TODO(step 7): for k in [0, init_yaw_steps): guess = init_pose rotated by k·360/steps about z;
-  //   align; keep the best that passes the gate (without the step check). Pass -> TRACKING.
+  // init_yaw_steps yaw seeds about the body at the predicted pose; the best quality pass wins,
+  //   unless another pass disagrees by more than a step. From INIT and LOST alike.
+  const small_gicp::PointCloud::Ptr submap = stack_submap();
+  if (!submap || submap->empty()) { return; }
+
+  const Eigen::Isometry3d T_odom_body = scans_.back().T_odom_body;
+  const Eigen::Isometry3d center = predict(T_map_odom_, T_odom_body); // T_map_body
+
+  std::vector<std::pair<Eigen::Isometry3d, double>> passing;
+
+  for (int k = 0; k < params_.init_yaw_steps; ++k) {
+    const double yaw_rad = k * 2.0 * M_PI / params_.init_yaw_steps;
+    Eigen::Isometry3d guess = center;
+    guess.linear() = Eigen::AngleAxisd(yaw_rad, Eigen::Vector3d::UnitZ()).toRotationMatrix() * center.linear();
+    const Match match = align(*submap, guess);
+    const Eigen::Isometry3d candidate = compose_correction(match.T_map_body, T_odom_body);
+    if (passes_gate(match.quality, Step{}, params_)) {
+      passing.push_back({candidate, match.quality.overlap});
+    }
+  }
+  if (!passing.empty()) {
+    std::sort(passing.begin(), passing.end(),
+              [](const auto & a, const auto & b) { return a.second > b.second; });
+    for (std::size_t i = 1; i < passing.size(); ++i) {
+      const Step s = step_between(passing.front().first, passing[i].first);
+      if ((s.meters > params_.max_step_m) ||
+      (s.degrees > params_.max_step_deg)) {
+        RCLCPP_WARN(
+          get_logger(), "Ambiguous: two answers %.2f m / %.1f deg apart, staying in %s",
+          s.meters, s.degrees, state_name(state_));
+        return;
+      }
+    }
+    T_map_odom_ = passing.front().first;
+    last_pass_ = now();
+    rejected_steps_in_a_row_ = 0;
+    state_ = State::TRACKING;
+  }
 }
 
 void MapLocalizer::on_match_timer()
 {
-  // TODO(step 7): state_ == INIT -> initialize(); else align(), step_between, passes_gate,
-  //   state_ = next_state(...), publish_status(...).
+  if (state_ == State::INIT || state_ == State::LOST) { initialize(); return; }
+
   const auto start = std::chrono::steady_clock::now();
   const small_gicp::PointCloud::Ptr submap = stack_submap();
   if (!submap || submap->empty()) { return; }
+
+  if (scans_.back().stamp == last_matched_stamp_) {
+    // no new scan: count as a failed match, let the age take it to LOST
+    state_ = next_state(state_, false, (now() - last_pass_).seconds(), rejected_steps_in_a_row_, params_);
+    return;
+  }
+  last_matched_stamp_ = scans_.back().stamp;
 
   // The submap is in the newest scan's body frame: predict from that scan's odometry
   const auto T_odom_body = scans_.back().T_odom_body;
   const Eigen::Isometry3d guess = predict(T_map_odom_, T_odom_body);
   const Match match = align(*submap, guess);
   const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
-
   const Eigen::Isometry3d candidate = compose_correction(match.T_map_body, T_odom_body);
   const Step step = step_between(T_map_odom_, candidate);
   const bool passed = passes_gate(match.quality, step, params_);
+  const bool quality_ok = passes_gate(match.quality, Step{}, params_);  // a zero step: quality alone
   if (passed) {
     T_map_odom_ = candidate;
-    last_pass_ = scans_.back().stamp;
+    last_pass_ = now();
     rejected_steps_in_a_row_ = 0;
-  } else {
+  } else if (quality_ok) {      // good match, too far: a large step
     ++rejected_steps_in_a_row_;
+  } else {                      // poor match: not a step, the run is broken
+    rejected_steps_in_a_row_ = 0;
   }
 
   const Eigen::Matrix3d R = match.T_map_body.rotation();
@@ -309,14 +381,16 @@ void MapLocalizer::on_match_timer()
     "Submap: %zu scans over %.2f s, %zu points -- "
     "[T_map_body] x: %.2f y: %.2f z: %.2f, yaw: %.1f deg -- "
     "overlap: %.2f, rmse: %.2f, min eig: %.2f, iterations: %zu, "
-    "converged: %d, elapsed: %.3f s, step: %.3f m %.3f deg, passed: %d",
+    "converged: %d, elapsed: %.3f s, step: %.3f m %.3f deg, passed: %d, state: %s",
     scans_.size(),
     (scans_.back().stamp - scans_.front().stamp).seconds(),
     submap->size(),
     t.x(), t.y(), t.z(), yaw_deg,
     q.overlap, q.rmse, q.min_eig, q.iterations,
     static_cast<int>(q.converged), elapsed.count(),
-    step.meters, step.degrees, static_cast<int>(passed));
+    step.meters, step.degrees, static_cast<int>(passed), state_name(state_));
+
+  state_ = next_state(state_, passed, (now() - last_pass_).seconds(), rejected_steps_in_a_row_, params_);
 }
 
 void MapLocalizer::publish_tf()
