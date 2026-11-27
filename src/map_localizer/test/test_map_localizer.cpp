@@ -192,6 +192,19 @@ TEST(States, Limits)
   EXPECT_EQ(next_state(State::HOLDING, false, 1.0, 3, p), State::LOST);
 }
 
+using map_localizer::status_level;
+using diagnostic_msgs::msg::DiagnosticStatus;
+
+// Preflight arms only on OK, so only TRACKING may give it; LOST must stand out from HOLDING.
+// Cast to int: gtest prints a uint8_t as a character.
+TEST(Status, LevelPerState)
+{
+  EXPECT_EQ(static_cast<int>(status_level(State::TRACKING)), DiagnosticStatus::OK);
+  EXPECT_EQ(static_cast<int>(status_level(State::INIT)), DiagnosticStatus::WARN);
+  EXPECT_EQ(static_cast<int>(status_level(State::HOLDING)), DiagnosticStatus::WARN);
+  EXPECT_EQ(static_cast<int>(status_level(State::LOST)), DiagnosticStatus::ERROR);
+}
+
 using map_localizer::Scan;
 using map_localizer::stack_points;
 

@@ -60,7 +60,23 @@ if out="$(docker run --rm "${node_opts[@]}" "${image}" ros2 run map_localizer ma
 fi
 grep -q "Couldn't read map file" <<<"${out}" || { echo "${out}" >&2; exit 1; }
 
-# TODO(step 7): 4. with no scans it stays alive in INIT for a few seconds and says it is waiting,
-#   then `docker inspect` shows the container still running.
+# 4. with no scans it stays alive in INIT, says so on the status (WARN), and sends no TF
+docker run -d --name "${container_name}" "${node_opts[@]}" "${image}" >/dev/null
+status="$(docker exec "${container_name}" bash -c 'source /opt/mullet_ws/install/setup.bash &&
+  timeout 20 ros2 topic echo --once /map_localizer/status' 2>&1 || true)"
+if ! grep -qF 'level: "\x01"' <<<"${status}" ||
+  ! grep -q "message: 'INIT" <<<"${status}"; then
+  echo "${status}" >&2; docker logs "${container_name}" >&2
+  echo "smoke: no WARN INIT status" >&2
+  exit 1
+fi
+if docker exec "${container_name}" bash -c 'source /opt/mullet_ws/install/setup.bash &&
+    timeout 5 ros2 topic echo --once /tf' >/dev/null 2>&1; then
+  echo "smoke: TF sent before the first pass" >&2
+  exit 1
+fi
+[[ "$(docker inspect -f '{{.State.Running}}' "${container_name}")" == true ]] \
+  || { docker logs "${container_name}" >&2; echo "smoke: the node died in INIT" >&2; exit 1; }
+echo "smoke: INIT, status WARN, no TF"
 
 echo "smoke: ${image} OK"

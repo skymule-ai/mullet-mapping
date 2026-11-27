@@ -18,7 +18,7 @@ Build-out
 5.  [x] Align: GICP from the predicted ``map -> body``
 6.  [x] Gate: overlap, RMSE, step size, degeneracy
 7.  [x] States: INIT (yaw search), TRACKING, HOLDING, LOST
-8.  [ ] Publish: TF at 10 Hz, status
+8.  [x] Publish: TF at 10 Hz, status
 9.  [ ] Replay: a recorded bag against its own map, offline
 10. [ ] Orin: CPU and memory next to FAST-LIO2
 11. [ ] Phase 2: hand flight, steps < 10 cm, gate never trips in the mapped area
