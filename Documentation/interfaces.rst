@@ -21,8 +21,10 @@ Writes
 * ``tf``: ``map -> camera_init`` as ``tf2_msgs/TFMessage``. Matched at 1 Hz,
   re-sent at 10 Hz. Nothing before the first passing match.
 * ``map_localizer/status``: ``diagnostic_msgs/DiagnosticStatus``. Level OK
-  (TRACKING), WARN (INIT, HOLDING), ERROR (LOST); values: state, overlap, RMSE,
-  step, age of the last passing match.
+  (TRACKING), WARN (INIT, HOLDING), ERROR (LOST). Message: state and reason.
+  Values: ``overlap``, ``rmse``, ``min_eig``, ``iterations``, ``step_meters``,
+  ``step_degrees``, ``age_s`` (seconds since the last passing match, ``never``
+  before the first) and ``state``. Published on every match tick.
 
 
 Frames

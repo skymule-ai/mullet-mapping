@@ -3,7 +3,6 @@
 // Two layers, so the math is testable without ROS:
 //   - free functions (pure: poses and numbers in, poses and numbers out), tested in test/;
 //   - the MapLocalizer node, which owns subscriptions, timers, state, and calls them.
-// TODO(step N) markers match the steps in Documentation/status.rst.
 #pragma once
 
 #include <cstdint>
@@ -81,31 +80,34 @@ struct Match
   MatchQuality quality;
 };
 
-// ── Pure math (steps 4–7), tested in test/test_map_localizer.cpp ─────────────
+// ── Pure math, tested in test/test_map_localizer.cpp ──────────────────────────
 
 // Every point of every scan in the newest scan's body frame: T_ref⁻¹ · T_odom_body · p, with
-// T_ref the newest scan's T_odom_body. Empty for no scans. (step 4)
+// T_ref the newest scan's T_odom_body. Empty for no scans.
 std::vector<Eigen::Vector4d> stack_points(const std::deque<Scan> & scans);
 
-// T_map_odom = T_map_body · T_odom_body⁻¹. Both body poses at the same stamp. (step 5)
+// T_map_odom = T_map_body · T_odom_body⁻¹. Both body poses at the same stamp.
 Eigen::Isometry3d compose_correction(
   const Eigen::Isometry3d & T_map_body, const Eigen::Isometry3d & T_odom_body);
 
-// T_map_body predicted from the last good correction and the current odometry. (step 5)
+// T_map_body predicted from the last good correction and the current odometry.
 Eigen::Isometry3d predict(
   const Eigen::Isometry3d & T_map_odom, const Eigen::Isometry3d & T_odom_body);
 
-// Translation (m) and rotation angle (deg) between two corrections. (step 6)
+// Translation (m) and rotation angle (deg) between two corrections.
 struct Step { double meters; double degrees; };
 Step step_between(const Eigen::Isometry3d & previous, const Eigen::Isometry3d & candidate);
 
-// True only if every check in Documentation/design.rst "Gate" holds. (step 6)
+// True only if every check in Documentation/design.rst "Gate" holds.
 bool passes_gate(const MatchQuality & quality, const Step & step, const Params & params);
 
-// Next state from the current one and this match's outcome. (step 7)
+// Next state from the current one and this match's outcome.
 State next_state(
   State current, bool passed, double seconds_since_last_pass, int rejected_steps_in_a_row,
   const Params & params);
+
+// DiagnosticStatus level of a state: OK (TRACKING), WARN (INIT, HOLDING), ERROR (LOST).
+uint8_t status_level(State state);
 
 // ── The node ──────────────────────────────────────────────────────────────────
 
@@ -115,41 +117,41 @@ public:
   explicit MapLocalizer(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
 private:
-  // Declare and read every parameter into params_. (step 2)
+  // Declare and read every parameter into params_.
   void declare_parameters();
 
-  // Read map.pcd, downsample to map_voxel, build the GICP target (covariances, KD-tree). (step 3)
+  // Read map.pcd, downsample to map_voxel, build the GICP target (covariances, KD-tree).
   void load_map();
 
   // A scan and its odometry, same stamp (the synchronizer pairs them): keep the last
-  // submap_window_s in scans_. Drops scans in unexpected frames; clears on time going back. (step 4)
+  // submap_window_s in scans_. Drops scans in unexpected frames; clears on time going back.
   void on_scan(
     const sensor_msgs::msg::PointCloud2::ConstSharedPtr & msg,
     const nav_msgs::msg::Odometry::ConstSharedPtr & odom);
 
   // The last submap_window_s of scans in the newest scan's body frame, downsampled to
-  // submap_voxel, with covariances: the GICP source. nullptr until a scan has arrived. (step 4)
+  // submap_voxel, with covariances: the GICP source. nullptr until a scan has arrived.
   small_gicp::PointCloud::Ptr stack_submap();
 
-  // GICP of the submap against the map from an initial guess; fills the quality. (step 5)
+  // GICP of the submap against the map from an initial guess; fills the quality.
   Match align(const small_gicp::PointCloud & submap, const Eigen::Isometry3d & guess) const;
 
-  // INIT: try init_yaw_steps yaw hypotheses around init_pose, keep the best. (step 7)
+  // INIT: try init_yaw_steps yaw hypotheses around init_pose, keep the best.
   void initialize();
 
-  // The 1 Hz loop: stack, predict, align, gate, update state and correction. (steps 4–7)
+  // The 1 Hz loop: stack, predict, align, gate, update state and correction.
   void on_match_timer();
 
-  // Re-send the last good map -> odom at tf_rate. (step 8)
+  // Re-send the last good map -> odom at tf_rate.
   void publish_tf();
 
-  // State, overlap, RMSE, step, age of the last pass. (step 8)
-  void publish_status(const MatchQuality & quality, const Step & step);
+  // Level from the state, the reason, quality, step, age of the last pass: interfaces.rst.
+  void publish_status(const MatchQuality & quality, const Step & step, const std::string & message_reason);
 
   Params params_;
   State state_{State::INIT};
   Eigen::Isometry3d T_map_odom_{Eigen::Isometry3d::Identity()};  // last good correction
-  rclcpp::Time last_pass_;
+  rclcpp::Time last_pass_{0, 0, RCL_ROS_TIME};
   int rejected_steps_in_a_row_{0};
 
   small_gicp::PointCloud::Ptr map_;

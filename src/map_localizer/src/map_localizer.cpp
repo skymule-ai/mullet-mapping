@@ -1,5 +1,4 @@
 // map_localizer: see include/map_localizer/map_localizer.hpp and Documentation/design.rst.
-// Unwritten functions throw, so nothing silently returns a made-up pose.
 #include "map_localizer/map_localizer.hpp"
 
 #include <chrono>
@@ -22,8 +21,6 @@ namespace map_localizer
 
 namespace
 {
-[[noreturn]] void todo(const char * what) { throw std::logic_error(std::string("TODO: ") + what); }
-
 const char * state_name(State state)
 {
   switch (state) {
@@ -92,6 +89,18 @@ State next_state(
   throw std::logic_error("Unhandled state in next_state");
 }
 
+uint8_t status_level(State state)
+{
+  // No default: -Wswitch flags a new state.
+  switch (state) {
+    case State::TRACKING: return diagnostic_msgs::msg::DiagnosticStatus::OK;
+    case State::INIT:
+    case State::HOLDING: return diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    case State::LOST: return diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+  }
+  throw std::logic_error("Unhandled state in status_level");
+}
+
 std::vector<Eigen::Vector4d> stack_points(const std::deque<Scan> & scans)
 {
   if (scans.empty()) return {};
@@ -137,8 +146,12 @@ MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
     this, get_clock(), rclcpp::Duration::from_seconds(1.0 / params_.match_rate),
     std::bind(&MapLocalizer::on_match_timer, this));
 
-  // TODO(step 8): status publisher "map_localizer/status", the TF broadcaster,
-  //   tf_timer_ at tf_rate -> publish_tf.
+  // Status publisher and TF broadcaster
+  status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticStatus>("map_localizer/status", 10);
+  tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+  tf_timer_ = rclcpp::create_timer(
+    this, get_clock(), rclcpp::Duration::from_seconds(1.0 / params_.tf_rate),
+    std::bind(&MapLocalizer::publish_tf, this));
 }
 
 void MapLocalizer::declare_parameters()
@@ -340,15 +353,20 @@ void MapLocalizer::initialize()
 
 void MapLocalizer::on_match_timer()
 {
-  if (state_ == State::INIT || state_ == State::LOST) { initialize(); return; }
+  if (state_ == State::INIT || state_ == State::LOST) {
+    initialize();
+    publish_status(MatchQuality{}, Step{}, "Searching");
+    return;
+  }
 
   const auto start = std::chrono::steady_clock::now();
   const small_gicp::PointCloud::Ptr submap = stack_submap();
-  if (!submap || submap->empty()) { return; }
+  if (!submap || submap->empty()) { publish_status(MatchQuality{}, Step{}, "No submap"); return; }
 
   if (scans_.back().stamp == last_matched_stamp_) {
     // no new scan: count as a failed match, let the age take it to LOST
     state_ = next_state(state_, false, (now() - last_pass_).seconds(), rejected_steps_in_a_row_, params_);
+    publish_status(MatchQuality{}, Step{}, "No new scan");
     return;
   }
   last_matched_stamp_ = scans_.back().stamp;
@@ -391,17 +409,45 @@ void MapLocalizer::on_match_timer()
     step.meters, step.degrees, static_cast<int>(passed), state_name(state_));
 
   state_ = next_state(state_, passed, (now() - last_pass_).seconds(), rejected_steps_in_a_row_, params_);
+  publish_status(match.quality, step, passed ? "Passed gate" : "Failed gate");
 }
 
 void MapLocalizer::publish_tf()
 {
-  // TODO(step 8): T_map_odom_ as map_frame -> odom_frame, stamped now. Nothing before the first pass.
+  if (state_ == State::INIT) { return; }
+  geometry_msgs::msg::TransformStamped tf_msg = tf2::eigenToTransform(T_map_odom_);
+  tf_msg.header.stamp = now();
+  tf_msg.header.frame_id = params_.map_frame;
+  tf_msg.child_frame_id = params_.odom_frame;
+  tf_broadcaster_->sendTransform(tf_msg);
 }
 
-void MapLocalizer::publish_status(const MatchQuality & quality, const Step & step)
+void MapLocalizer::publish_status(const MatchQuality & quality, const Step & step, const std::string & message_reason)
 {
-  // TODO(step 8): level OK (TRACKING), WARN (HOLDING, INIT), ERROR (LOST); values as key/value pairs.
-  (void)quality; (void)step;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.level = status_level(state_);
+  status.name = "map_localizer";
+  status.message = std::string(state_name(state_)) + ": " + message_reason;
+  status.values.resize(8);
+  status.values[0].key = "overlap";
+  status.values[0].value = std::to_string(quality.overlap);
+  status.values[1].key = "rmse";
+  status.values[1].value = std::to_string(quality.rmse);
+  status.values[2].key = "min_eig";
+  status.values[2].value = std::to_string(quality.min_eig);
+  status.values[3].key = "iterations";
+  status.values[3].value = std::to_string(quality.iterations);
+  status.values[4].key = "step_meters";
+  status.values[4].value = std::to_string(step.meters);
+  status.values[5].key = "step_degrees";
+  status.values[5].value = std::to_string(step.degrees);
+  status.values[6].key = "age_s";
+  status.values[6].value = (state_ == State::INIT)
+    ? "never"
+    : std::to_string((now() - last_pass_).seconds());
+  status.values[7].key = "state";
+  status.values[7].value = state_name(state_);
+  status_pub_->publish(status);
 }
 
 }  // namespace map_localizer
