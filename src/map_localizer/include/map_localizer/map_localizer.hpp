@@ -166,6 +166,7 @@ private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr match_timer_;
   rclcpp::TimerBase::SharedPtr tf_timer_;
+  rclcpp::Time last_matched_stamp_{0, 0, RCL_ROS_TIME};  // ROS time, like message stamps
 };
 
 }  // namespace map_localizer
