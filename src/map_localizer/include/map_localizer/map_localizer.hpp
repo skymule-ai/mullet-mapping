@@ -146,7 +146,8 @@ private:
   void publish_tf();
 
   // Level from the state, the reason, quality, step, age of the last pass: interfaces.rst.
-  void publish_status(const MatchQuality & quality, const Step & step, const std::string & message_reason);
+  void publish_status(
+    const MatchQuality & quality, const Step & step, const std::string & message_reason);
 
   Params params_;
   State state_{State::INIT};

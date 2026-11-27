@@ -147,7 +147,8 @@ MapLocalizer::MapLocalizer(const rclcpp::NodeOptions & options)
     std::bind(&MapLocalizer::on_match_timer, this));
 
   // Status publisher and TF broadcaster
-  status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticStatus>("map_localizer/status", 10);
+  status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticStatus>(
+    "map_localizer/status", 10);
   tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
   tf_timer_ = rclcpp::create_timer(
     this, get_clock(), rclcpp::Duration::from_seconds(1.0 / params_.tf_rate),
@@ -355,7 +356,9 @@ void MapLocalizer::on_match_timer()
 {
   if (state_ == State::INIT || state_ == State::LOST) {
     initialize();
-    publish_status(MatchQuality{}, Step{}, "Searching");
+    // initialize() leaves INIT and LOST only when the search passed.
+    const bool found = state_ == State::TRACKING;
+    publish_status(MatchQuality{}, Step{}, found ? "Search passed" : "Searching");
     return;
   }
 
@@ -422,7 +425,8 @@ void MapLocalizer::publish_tf()
   tf_broadcaster_->sendTransform(tf_msg);
 }
 
-void MapLocalizer::publish_status(const MatchQuality & quality, const Step & step, const std::string & message_reason)
+void MapLocalizer::publish_status(
+  const MatchQuality & quality, const Step & step, const std::string & message_reason)
 {
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.level = status_level(state_);
