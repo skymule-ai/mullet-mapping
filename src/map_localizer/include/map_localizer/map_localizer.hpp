@@ -51,6 +51,7 @@ struct Params
   double min_hessian_eig;   // GICP Hessian, translation block
   Eigen::Vector4d init_pose;  // x, y, z (m), yaw (deg)
   int init_yaw_steps;
+  std::vector<double> search_corr_dists;  // m, coarse search stages before max_corr_dist
   double lost_after_s;      // s
   int max_rejected_steps;
 };
@@ -133,10 +134,14 @@ private:
   // submap_voxel, with covariances: the GICP source. nullptr until a scan has arrived.
   small_gicp::PointCloud::Ptr stack_submap();
 
-  // GICP of the submap against the map from an initial guess; fills the quality.
-  Match align(const small_gicp::PointCloud & submap, const Eigen::Isometry3d & guess) const;
+  // GICP of the submap against the map from an initial guess, pairing points within
+  // max_correspondence_distance; fills the quality, always measured at max_corr_dist.
+  Match align(
+    const small_gicp::PointCloud & submap, const Eigen::Isometry3d & guess,
+    double max_correspondence_distance) const;
 
-  // INIT: try init_yaw_steps yaw hypotheses around init_pose, keep the best.
+  // INIT and LOST: init_yaw_steps yaw seeds about the predicted body, each aligned coarse to fine
+  // (search_corr_dists, then max_corr_dist); keep the best. Marks the newest scan as matched.
   void initialize();
 
   // The 1 Hz loop: stack, predict, align, gate, update state and correction.

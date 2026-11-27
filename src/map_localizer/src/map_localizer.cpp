@@ -2,6 +2,7 @@
 #include "map_localizer/map_localizer.hpp"
 
 #include <chrono>
+#include <limits>
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
@@ -194,6 +195,16 @@ void MapLocalizer::declare_parameters()
   params_.init_pose = Eigen::Vector4d(
     init_pose[0], init_pose[1], init_pose[2], init_pose[3]);
   params_.init_yaw_steps = declare_parameter<int>("init_yaw_steps", 12);
+  params_.search_corr_dists = declare_parameter<std::vector<double>>(
+    "search_corr_dists", {5.0, 1.5});
+  double previous = std::numeric_limits<double>::infinity();
+  for (const double d : params_.search_corr_dists) {
+    if (!(d < previous && d > params_.max_corr_dist)) {
+      throw std::invalid_argument(
+        "Parameter 'search_corr_dists' must be decreasing and above 'max_corr_dist'");
+    }
+    previous = d;
+  }
   params_.lost_after_s = declare_parameter<double>("lost_after_s", 5.0);
   params_.max_rejected_steps = declare_parameter<int>("max_rejected_steps", 3);
 }
@@ -273,13 +284,14 @@ small_gicp::PointCloud::Ptr MapLocalizer::stack_submap()
 }
 
 Match MapLocalizer::align(
-  const small_gicp::PointCloud & submap, const Eigen::Isometry3d & guess) const
+  const small_gicp::PointCloud & submap, const Eigen::Isometry3d & guess,
+  const double max_correspondence_distance) const
 {
   // GICP result -> T_map_body, Hessian -> min_eig. Overlap and RMSE from our own nearest-neighbour
   //   pass at the final pose: result.error is the covariance-weighted cost, not meters.
   small_gicp::RegistrationSetting s;
   s.type = small_gicp::RegistrationSetting::RegistrationType::GICP;
-  s.max_correspondence_distance = params_.max_corr_dist;
+  s.max_correspondence_distance = max_correspondence_distance;
 
   small_gicp::RegistrationResult result = small_gicp::align(*map_, submap, *map_kdtree_, guess, s);
 
@@ -319,14 +331,21 @@ void MapLocalizer::initialize()
 
   const Eigen::Isometry3d T_odom_body = scans_.back().T_odom_body;
   const Eigen::Isometry3d center = predict(T_map_odom_, T_odom_body); // T_map_body
+  last_matched_stamp_ = scans_.back().stamp;
 
   std::vector<std::pair<Eigen::Isometry3d, double>> passing;
 
   for (int k = 0; k < params_.init_yaw_steps; ++k) {
     const double yaw_rad = k * 2.0 * M_PI / params_.init_yaw_steps;
     Eigen::Isometry3d guess = center;
-    guess.linear() = Eigen::AngleAxisd(yaw_rad, Eigen::Vector3d::UnitZ()).toRotationMatrix() * center.linear();
-    const Match match = align(*submap, guess);
+    guess.linear() =
+      Eigen::AngleAxisd(yaw_rad, Eigen::Vector3d::UnitZ()).toRotationMatrix() * center.linear();
+    // Coarse to fine: each stage from the last one's result; the gate judges the final stage.
+    Match match{guess, MatchQuality{}};
+    for (const double corr : params_.search_corr_dists) {
+      match = align(*submap, match.T_map_body, corr);
+    }
+    match = align(*submap, match.T_map_body, params_.max_corr_dist);
     const Eigen::Isometry3d candidate = compose_correction(match.T_map_body, T_odom_body);
     if (passes_gate(match.quality, Step{}, params_)) {
       passing.push_back({candidate, match.quality.overlap});
@@ -354,6 +373,15 @@ void MapLocalizer::initialize()
 
 void MapLocalizer::on_match_timer()
 {
+  if (scans_.empty()) { publish_status(MatchQuality{}, Step{}, "No submap"); return; }
+  // No new scan since the last match or search: count as a failed match, let the age take it to
+  //   LOST. Before the search too, or INIT and LOST would search the scans from before a gap.
+  if (scans_.back().stamp == last_matched_stamp_) {
+    state_ = next_state(state_, false, (now() - last_pass_).seconds(), rejected_steps_in_a_row_, params_);
+    publish_status(MatchQuality{}, Step{}, "No new scan");
+    return;
+  }
+
   if (state_ == State::INIT || state_ == State::LOST) {
     initialize();
     // initialize() leaves INIT and LOST only when the search passed.
@@ -365,19 +393,12 @@ void MapLocalizer::on_match_timer()
   const auto start = std::chrono::steady_clock::now();
   const small_gicp::PointCloud::Ptr submap = stack_submap();
   if (!submap || submap->empty()) { publish_status(MatchQuality{}, Step{}, "No submap"); return; }
-
-  if (scans_.back().stamp == last_matched_stamp_) {
-    // no new scan: count as a failed match, let the age take it to LOST
-    state_ = next_state(state_, false, (now() - last_pass_).seconds(), rejected_steps_in_a_row_, params_);
-    publish_status(MatchQuality{}, Step{}, "No new scan");
-    return;
-  }
   last_matched_stamp_ = scans_.back().stamp;
 
   // The submap is in the newest scan's body frame: predict from that scan's odometry
   const auto T_odom_body = scans_.back().T_odom_body;
   const Eigen::Isometry3d guess = predict(T_map_odom_, T_odom_body);
-  const Match match = align(*submap, guess);
+  const Match match = align(*submap, guess, params_.max_corr_dist);
   const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
   const Eigen::Isometry3d candidate = compose_correction(match.T_map_body, T_odom_body);
   const Step step = step_between(T_map_odom_, candidate);
