@@ -2,10 +2,13 @@
 // Unwritten functions throw, so nothing silently returns a made-up pose.
 #include "map_localizer/map_localizer.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
+
+#include <Eigen/Eigenvalues>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
@@ -26,16 +29,12 @@ namespace
 Eigen::Isometry3d compose_correction(
   const Eigen::Isometry3d & T_map_body, const Eigen::Isometry3d & T_odom_body)
 {
-  // TODO(step 5): T_map_odom = T_map_body · T_odom_body⁻¹
-  (void)T_map_body; (void)T_odom_body;
-  todo("compose_correction");
+  return T_map_body * T_odom_body.inverse();
 }
 
 Eigen::Isometry3d predict(const Eigen::Isometry3d & T_map_odom, const Eigen::Isometry3d & T_odom_body)
 {
-  // TODO(step 5): T_map_body = T_map_odom · T_odom_body
-  (void)T_map_odom; (void)T_odom_body;
-  todo("predict");
+  return T_map_odom * T_odom_body;
 }
 
 Step step_between(const Eigen::Isometry3d & previous, const Eigen::Isometry3d & candidate)
@@ -228,11 +227,42 @@ small_gicp::PointCloud::Ptr MapLocalizer::stack_submap()
   return small_gicp::preprocess_points(stack_points(scans_), params_.submap_voxel).first;
 }
 
-void MapLocalizer::align()
+Match MapLocalizer::align(
+  const small_gicp::PointCloud & submap, const Eigen::Isometry3d & guess) const
 {
-  // TODO(step 5): small_gicp GICP, source = submap (in body of the reference scan), target = map,
-  //   initial guess = predict(T_map_odom_, T_odom_body). Fill MatchQuality from the result
-  //   (inliers -> overlap, error -> rmse, Hessian translation block -> min_eig).
+  // GICP result -> T_map_body, Hessian -> min_eig. Overlap and RMSE from our own nearest-neighbour
+  //   pass at the final pose: result.error is the covariance-weighted cost, not meters.
+  small_gicp::RegistrationSetting s;
+  s.type = small_gicp::RegistrationSetting::RegistrationType::GICP;
+  s.max_correspondence_distance = params_.max_corr_dist;
+
+  small_gicp::RegistrationResult result = small_gicp::align(*map_, submap, *map_kdtree_, guess, s);
+
+  Match match;
+  match.T_map_body = result.T_target_source;
+
+  size_t count = 0;    // submap points within max_corr_dist of the map
+  double sum_sq = 0.0;  // their squared distances
+
+  for (const auto & point : submap.points) {
+    size_t idx; double sq;
+    if (
+      small_gicp::traits::nearest_neighbor_search(
+        *map_kdtree_, match.T_map_body * point, &idx, &sq) == 1 &&
+      sq <= params_.max_corr_dist * params_.max_corr_dist)
+    {
+      count += 1;
+      sum_sq += sq;
+    }
+  }
+  match.quality.overlap = count / static_cast<double>(submap.size());
+  match.quality.rmse = (count > 0) ? std::sqrt(sum_sq / count) : 0.0;
+  const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigensolver(
+    result.H.bottomRightCorner<3, 3>());
+  match.quality.min_eig = eigensolver.eigenvalues()(0);
+  match.quality.iterations = result.iterations + 1;  // small_gicp stores the last 0-based index
+  match.quality.converged = result.converged;
+  return match;
 }
 
 void MapLocalizer::initialize()
@@ -243,14 +273,35 @@ void MapLocalizer::initialize()
 
 void MapLocalizer::on_match_timer()
 {
-  // TODO(steps 5–7): state_ == INIT -> initialize(); else align(), step_between, passes_gate,
-  //   on pass T_map_odom_ = compose_correction(...), state_ = next_state(...), publish_status(...).
+  // TODO(steps 6–7): state_ == INIT -> initialize(); else align(), step_between, passes_gate,
+  //   state_ = next_state(...), publish_status(...).
+  const auto start = std::chrono::steady_clock::now();
   const small_gicp::PointCloud::Ptr submap = stack_submap();
-  if (!submap) { return; }
-  // TODO(step 5): replace this log with align().
+  if (!submap || submap->empty()) { return; }
+
+  // The submap is in the newest scan's body frame: predict from that scan's odometry
+  const auto T_odom_body = scans_.back().T_odom_body;
+  const Eigen::Isometry3d guess = predict(T_map_odom_, T_odom_body);
+  const Match match = align(*submap, guess);
+  const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+
+  if (match.quality.converged) {
+    // TODO(step 6): only on a pass
+    T_map_odom_ = compose_correction(match.T_map_body, T_odom_body);
+  }
+
+  const Eigen::Matrix3d R = match.T_map_body.rotation();
+  const Eigen::Vector3d t = match.T_map_body.translation();
+  const double yaw_deg = std::atan2(R(1, 0), R(0, 0)) * 180.0 / M_PI;
+  const MatchQuality & q = match.quality;
   RCLCPP_INFO(
-    get_logger(), "Submap: %zu scans over %.2f s, %zu points", scans_.size(),
-    (scans_.back().stamp - scans_.front().stamp).seconds(), submap->size());
+    get_logger(),
+    "Submap: %zu scans over %.2f s, %zu points -- [T_map_body] x: %.2f y: %.2f z: %.2f, "
+    "yaw: %.1f deg -- overlap: %.2f, rmse: %.2f, min eig: %.2f, iterations: %zu, "
+    "converged: %d, elapsed: %.3f s",
+    scans_.size(), (scans_.back().stamp - scans_.front().stamp).seconds(), submap->size(),
+    t.x(), t.y(), t.z(), yaw_deg, q.overlap, q.rmse,
+    q.min_eig, q.iterations, static_cast<int>(q.converged), elapsed.count());
 }
 
 void MapLocalizer::publish_tf()

@@ -62,6 +62,8 @@ struct MatchQuality
   double overlap;        // fraction of submap points within max_corr_dist of the map
   double rmse;           // m, over those points
   double min_eig;        // smallest eigenvalue of the translation block of the GICP Hessian
+  size_t iterations;     // GICP iterations run
+  bool converged;        // GICP converged within max_iterations
 };
 
 // One FAST-LIO2 scan with the odometry of the same stamp.
@@ -70,6 +72,13 @@ struct Scan
   rclcpp::Time stamp;
   Eigen::Isometry3d T_odom_body;        // camera_init -> body at stamp
   std::vector<Eigen::Vector4d> points;  // in body, w = 1
+};
+
+// The result of aligning a submap to the map, including the estimated pose and quality metrics.
+struct Match
+{
+  Eigen::Isometry3d T_map_body;
+  MatchQuality quality;
 };
 
 // ── Pure math (steps 4–7), tested in test/test_map_localizer.cpp ─────────────
@@ -123,8 +132,7 @@ private:
   small_gicp::PointCloud::Ptr stack_submap();
 
   // GICP of the submap against the map from an initial guess; fills the quality. (step 5)
-  // TODO(step 5): signature with the submap and the guess; returns T_map_body + MatchQuality.
-  void align();
+  Match align(const small_gicp::PointCloud & submap, const Eigen::Isometry3d & guess) const;
 
   // INIT: try init_yaw_steps yaw hypotheses around init_pose, keep the best. (step 7)
   void initialize();

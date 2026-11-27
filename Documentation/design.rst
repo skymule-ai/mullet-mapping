@@ -56,7 +56,10 @@ The Loop, at 1 Hz
 2. Downsample the submap to ``submap_voxel`` (0.1-0.2 m).
 3. Predict ``T_map_body = T_map_odom(last good) * T_odom_body(now)``. Off only
    by the drift since the last match: a few cm.
-4. Align. GICP (small_gicp), submap to map, from the prediction, coarse to fine.
+4. Align. GICP (small_gicp), submap to map, from the prediction, in one pass
+   at ``max_corr_dist``: the prediction is a few cm off. Overlap and RMSE come
+   from a nearest-neighbour pass at the result (GICP's own error is weighted by
+   the covariances, not in meters).
 5. Gate. Accept only if all hold:
 
    * overlap: more than ``min_overlap`` (0.5) of the points within

@@ -8,14 +8,14 @@ Each step matches the ``TODO(step N)`` markers in the code
 Build-out
 ---------
 
-1.  [x] Reference: README.md, Documentation/, scaffolding
+1.  [x] Reference: README.txt, Documentation/, scaffolding
 2.  [x] Skeleton: package, Dockerfile, compose, CI build in the image; the node
     starts
 3.  [x] Map: load ``map.pcd``, downsample, build the target (covariances,
     KD-tree)
 4.  [x] Submap: stack ~1 s of scans, each with the odometry of its stamp, in the
     newest scan's body frame
-5.  [ ] Align: GICP from the predicted ``map -> body``
+5.  [x] Align: GICP from the predicted ``map -> body``
 6.  [ ] Gate: overlap, RMSE, step size, degeneracy
 7.  [ ] States: INIT (yaw search), TRACKING, HOLDING, LOST
 8.  [ ] Publish: TF at 10 Hz, status
