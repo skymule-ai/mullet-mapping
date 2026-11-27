@@ -16,7 +16,7 @@ Build-out
 4.  [x] Submap: stack ~1 s of scans, each with the odometry of its stamp, in the
     newest scan's body frame
 5.  [x] Align: GICP from the predicted ``map -> body``
-6.  [ ] Gate: overlap, RMSE, step size, degeneracy
+6.  [x] Gate: overlap, RMSE, step size, degeneracy
 7.  [ ] States: INIT (yaw search), TRACKING, HOLDING, LOST
 8.  [ ] Publish: TF at 10 Hz, status
 9.  [ ] Replay: a recorded bag against its own map, offline

@@ -1,5 +1,8 @@
 // Unit tests for the pure math in map_localizer.hpp: no ROS, no files, no small_gicp calls.
 // Write each test before its function (it fails against the throwing stub), then make it pass.
+#include <cmath>
+#include <limits>
+
 #include <gtest/gtest.h>
 
 #include "map_localizer/map_localizer.hpp"
@@ -46,12 +49,98 @@ TEST(Correction, PredictByHand)
     << T_map_body.translation().transpose();
 }
 
-// TODO(step 6): 0.2 m and 2 deg apart -> step_between reports those numbers.
-TEST(Step, MetersAndDegrees) { GTEST_SKIP() << "TODO(step 6)"; }
+using map_localizer::MatchQuality;
+using map_localizer::passes_gate;
+using map_localizer::Step;
+using map_localizer::step_between;
 
-// TODO(step 6): a match that meets every threshold passes; each single violation
-//   (overlap, rmse, step m, step deg, min_eig) fails on its own.
-TEST(Gate, EachCheckCanFailAlone) { GTEST_SKIP() << "TODO(step 6)"; }
+// previous is rotated and away from the origin, so candidate · previous⁻¹ (the wrong order) gives
+// another translation; radians instead of degrees gives 0.035.
+TEST(Step, MetersAndDegrees)
+{
+  const Eigen::Isometry3d previous = Eigen::Translation3d(3, -2, 1) *
+    Eigen::AngleAxisd(0.7, Eigen::Vector3d(1, 2, 3).normalized());
+  // 0.2 m (3-4-5 triangle) and 2 deg, about a tilted axis, in previous's frame
+  const Eigen::Isometry3d candidate = previous * Eigen::Translation3d(0.12, -0.16, 0) *
+    Eigen::AngleAxisd(2.0 * M_PI / 180.0, Eigen::Vector3d(0, 1, 1).normalized());
+
+  const Step step = step_between(previous, candidate);
+
+  EXPECT_NEAR(step.meters, 0.2, 1e-9);
+  EXPECT_NEAR(step.degrees, 2.0, 1e-9);
+}
+
+TEST(Step, SameCorrectionIsZero)
+{
+  const Eigen::Isometry3d T = Eigen::Translation3d(3, -2, 1) *
+    Eigen::AngleAxisd(0.7, Eigen::Vector3d::UnitZ());
+  const Step step = step_between(T, T);
+  EXPECT_NEAR(step.meters, 0.0, 1e-9);
+  EXPECT_NEAR(step.degrees, 0.0, 1e-6);
+}
+
+namespace
+{
+Params gate_params()
+{
+  Params p{};
+  p.min_overlap = 0.5;
+  p.max_rmse = 0.2;
+  p.max_step_m = 0.3;
+  p.max_step_deg = 3.0;
+  p.min_hessian_eig = 100.0;
+  return p;
+}
+const MatchQuality kGood{0.8, 0.05, 500.0, 10, true};  // overlap, rmse, min_eig, iterations, conv.
+const Step kSmall{0.05, 0.5};                            // m, deg
+}  // namespace
+
+TEST(Gate, EachCheckCanFailAlone)
+{
+  const Params p = gate_params();
+  ASSERT_TRUE(passes_gate(kGood, kSmall, p));
+
+  // Each case breaks exactly one check of the baseline.
+  auto fails = [&](auto && change) {
+      MatchQuality q = kGood;
+      Step s = kSmall;
+      change(q, s);
+      return !passes_gate(q, s, p);
+    };
+  EXPECT_TRUE(fails([](MatchQuality & q, Step &) {q.overlap = 0.4;})) << "overlap";
+  EXPECT_TRUE(fails([](MatchQuality & q, Step &) {q.rmse = 0.3;})) << "rmse";
+  EXPECT_TRUE(fails([](MatchQuality & q, Step &) {q.converged = false;})) << "converged";
+  EXPECT_TRUE(fails([](MatchQuality & q, Step &) {q.min_eig = 50.0;})) << "min_eig";
+  EXPECT_TRUE(fails([](MatchQuality &, Step & s) {s.meters = 0.4;})) << "step m";
+  EXPECT_TRUE(fails([](MatchQuality &, Step & s) {s.degrees = 4.0;})) << "step deg";
+}
+
+// Thresholds are inclusive: exactly on every limit still passes.
+TEST(Gate, OnThresholdPasses)
+{
+  const Params p = gate_params();
+  const MatchQuality q{p.min_overlap, p.max_rmse, p.min_hessian_eig, 10, true};
+  EXPECT_TRUE(passes_gate(q, Step{p.max_step_m, p.max_step_deg}, p));
+}
+
+// A diverged GICP can give NaN. Every comparison with NaN is false, so the gate must fail; written
+// as !(x > limit) it would pass.
+TEST(Gate, NaNFails)
+{
+  const Params p = gate_params();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  MatchQuality q = kGood;
+  q.rmse = nan;
+  EXPECT_FALSE(passes_gate(q, kSmall, p)) << "rmse";
+  q = kGood;
+  q.overlap = nan;
+  EXPECT_FALSE(passes_gate(q, kSmall, p)) << "overlap";
+  q = kGood;
+  q.min_eig = nan;
+  EXPECT_FALSE(passes_gate(q, kSmall, p)) << "min_eig";
+  EXPECT_FALSE(passes_gate(kGood, Step{nan, 0.5}, p)) << "step m";
+  EXPECT_FALSE(passes_gate(kGood, Step{0.05, nan}, p)) << "step deg";
+}
 
 // TODO(step 7): TRACKING + fail -> HOLDING; HOLDING + pass -> TRACKING;
 //   no pass for lost_after_s -> LOST; LOST + pass outside INIT stays LOST.
